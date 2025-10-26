@@ -1,164 +1,175 @@
-import { FocusSession, UserSettings, FocusStats, AnalyticsData, User, DistractionEvent } from './models'
+/**
+ * Centralized API client with error handling, retries, and type safety
+ */
 
-const API_BASE = '/api'
-
-// Client-side API functions that work with the session
-export const apiClient = {
-  // User API
-  async getCurrentUser(): Promise<User | null> {
-    try {
-      const response = await fetch(`${API_BASE}/users/me`)
-      if (!response.ok) return null
-      const data = await response.json()
-      return data.user
-    } catch (error) {
-      console.error('Error fetching current user:', error)
-      return null
-    }
-  },
-
-  // Settings API
-  async getSettings(): Promise<UserSettings | null> {
-    try {
-      const response = await fetch(`${API_BASE}/settings`)
-      if (!response.ok) return null
-      const data = await response.json()
-      return data.settings
-    } catch (error) {
-      console.error('Error fetching settings:', error)
-      return null
-    }
-  },
-
-  async updateSettings(settings: Partial<UserSettings>): Promise<UserSettings | null> {
-    try {
-      const response = await fetch(`${API_BASE}/settings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings)
-      })
-      if (!response.ok) return null
-      const data = await response.json()
-      return data.settings
-    } catch (error) {
-      console.error('Error updating settings:', error)
-      return null
-    }
-  },
-
-  // Sessions API
-  async getSessions(limit = 50, offset = 0): Promise<FocusSession[]> {
-    try {
-      const response = await fetch(`${API_BASE}/sessions?limit=${limit}&offset=${offset}`)
-      if (!response.ok) return []
-      const data = await response.json()
-      return data.sessions
-    } catch (error) {
-      console.error('Error fetching sessions:', error)
-      return []
-    }
-  },
-
-  async getSession(sessionId: string): Promise<FocusSession | null> {
-    try {
-      const response = await fetch(`${API_BASE}/sessions/${sessionId}`)
-      if (!response.ok) return null
-      const data = await response.json()
-      return data.session
-    } catch (error) {
-      console.error('Error fetching session:', error)
-      return null
-    }
-  },
-
-  async createSession(sessionData: {
-    targetDuration: number
-    sessionType?: 'focus' | 'break' | 'long-break'
-    cameraEnabled?: boolean
-  }): Promise<FocusSession | null> {
-    try {
-      const response = await fetch(`${API_BASE}/sessions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(sessionData)
-      })
-      if (!response.ok) return null
-      const data = await response.json()
-      return data.session
-    } catch (error) {
-      console.error('Error creating session:', error)
-      return null
-    }
-  },
-
-  async updateSession(sessionId: string, updates: Partial<FocusSession>): Promise<boolean> {
-    try {
-      const response = await fetch(`${API_BASE}/sessions/${sessionId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates)
-      })
-      return response.ok
-    } catch (error) {
-      console.error('Error updating session:', error)
-      return false
-    }
-  },
-
-  async deleteSession(sessionId: string): Promise<boolean> {
-    try {
-      const response = await fetch(`${API_BASE}/sessions/${sessionId}`, {
-        method: 'DELETE'
-      })
-      return response.ok
-    } catch (error) {
-      console.error('Error deleting session:', error)
-      return false
-    }
-  },
-
-  async addDistraction(sessionId: string, distraction: Omit<DistractionEvent, 'timestamp'>): Promise<DistractionEvent | null> {
-    try {
-      const response = await fetch(`${API_BASE}/sessions/${sessionId}/distractions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(distraction)
-      })
-      if (!response.ok) return null
-      const data = await response.json()
-      return data.distraction
-    } catch (error) {
-      console.error('Error adding distraction:', error)
-      return null
-    }
-  },
-
-  // Analytics API
-  async getStats(period: 'week' | 'month' | 'year' = 'week'): Promise<FocusStats | null> {
-    try {
-      const response = await fetch(`${API_BASE}/analytics?period=${period}`)
-      if (!response.ok) return null
-      const data = await response.json()
-      return data.analytics
-    } catch (error) {
-      console.error('Error fetching analytics:', error)
-      return null
-    }
-  },
-
-  async getDaily(date?: string): Promise<AnalyticsData | null> {
-    try {
-      const url = date 
-        ? `${API_BASE}/analytics/daily?date=${date}`
-        : `${API_BASE}/analytics/daily`
-      
-      const response = await fetch(url)
-      if (!response.ok) return null
-      const data = await response.json()
-      return data.dailyAnalytics
-    } catch (error) {
-      console.error('Error fetching daily analytics:', error)
-      return null
-    }
+export class ApiError extends Error {
+  constructor(message: string, public status: number, public data?: any) {
+    super(message);
+    this.name = "ApiError";
   }
 }
+
+interface RequestConfig extends RequestInit {
+  retry?: number;
+  retryDelay?: number;
+  timeout?: number;
+}
+
+/**
+ * Make an API request with automatic retry and error handling
+ */
+export async function apiRequest<T = any>(
+  url: string,
+  config: RequestConfig = {}
+): Promise<T> {
+  const {
+    retry = 3,
+    retryDelay = 1000,
+    timeout = 30000,
+    ...fetchConfig
+  } = config;
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < retry; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+      const response = await fetch(url, {
+        ...fetchConfig,
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...fetchConfig.headers,
+        },
+      });
+
+      clearTimeout(timeoutId);
+
+      // Handle non-OK responses
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new ApiError(
+          errorData.error || errorData.message || "Request failed",
+          response.status,
+          errorData
+        );
+      }
+
+      // Parse JSON response
+      const data = await response.json();
+      return data as T;
+    } catch (error: any) {
+      lastError = error;
+
+      // Don't retry on client errors (4xx)
+      if (
+        error instanceof ApiError &&
+        error.status >= 400 &&
+        error.status < 500
+      ) {
+        throw error;
+      }
+
+      // Wait before retry (exponential backoff)
+      if (attempt < retry - 1) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, retryDelay * Math.pow(2, attempt))
+        );
+      }
+    }
+  }
+
+  throw lastError || new Error("Request failed after retries");
+}
+
+/**
+ * API client with common methods
+ */
+export const api = {
+  get: <T = any>(url: string, config?: RequestConfig) =>
+    apiRequest<T>(url, { ...config, method: "GET" }),
+
+  post: <T = any>(url: string, data?: any, config?: RequestConfig) =>
+    apiRequest<T>(url, {
+      ...config,
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  put: <T = any>(url: string, data?: any, config?: RequestConfig) =>
+    apiRequest<T>(url, {
+      ...config,
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  patch: <T = any>(url: string, data?: any, config?: RequestConfig) =>
+    apiRequest<T>(url, {
+      ...config,
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  delete: <T = any>(url: string, config?: RequestConfig) =>
+    apiRequest<T>(url, { ...config, method: "DELETE" }),
+};
+
+/**
+ * Type-safe API endpoints
+ */
+export const endpoints = {
+  // Auth
+  auth: {
+    register: (data: { name: string; email: string; password: string }) =>
+      api.post("/api/auth/register", data),
+    signIn: (data: { email: string; password: string }) =>
+      api.post("/api/auth/signin", data),
+  },
+
+  // Sessions
+  sessions: {
+    list: (params?: Record<string, any>) =>
+      api.get(`/api/sessions?${new URLSearchParams(params).toString()}`),
+    create: (data: any) => api.post("/api/sessions", data),
+    get: (id: string) => api.get(`/api/sessions/${id}`),
+    update: (id: string, data: any) => api.patch(`/api/sessions/${id}`, data),
+    delete: (id: string) => api.delete(`/api/sessions/${id}`),
+    addDistraction: (id: string, data: any) =>
+      api.post(`/api/sessions/${id}/distractions`, data),
+  },
+
+  // Analytics
+  analytics: {
+    get: (period: string = "week") =>
+      api.get(`/api/analytics?period=${period}`),
+    daily: (date?: string) =>
+      api.get(`/api/analytics/daily${date ? `?date=${date}` : ""}`),
+  },
+
+  // User
+  user: {
+    me: () => api.get("/api/users/me"),
+    stats: () => api.get("/api/users/me/stats"),
+    update: (data: any) => api.put("/api/users/me", data),
+  },
+
+  // Settings
+  settings: {
+    get: () => api.get("/api/settings"),
+    update: (data: any) => api.put("/api/settings", data),
+    reset: () => api.delete("/api/settings"),
+  },
+
+  // Achievements
+  achievements: {
+    list: () => api.get("/api/achievements"),
+  },
+
+  // Export
+  export: {
+    sessions: (period: string = "month") =>
+      fetch(`/api/export?period=${period}`).then((res) => res.blob()),
+  },
+};

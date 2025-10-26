@@ -1,36 +1,38 @@
 import type { Metadata } from "next";
 import { GeistSans } from "geist/font/sans";
-import { GeistMono } from "geist/font/mono";
-import { Analytics } from "@vercel/analytics/next";
-import { ThemeProvider } from "@/components/theme-provider";
-import { AuthSessionProvider } from "@/components/session-provider";
+import { Providers } from "./providers"; // ← CRITICAL: Import Providers
 import "./globals.css";
 
-
 export const metadata: Metadata = {
-  title: "Focus Flow",
-  description: "Attention Analyzer App",
+  title: "FocusFlow - Master Your Focus",
+  description: "AI-powered focus tracking and productivity analytics",
+  keywords: [
+    "focus",
+    "productivity",
+    "time tracking",
+    "pomodoro",
+    "concentration",
+  ],
+  authors: [{ name: "FocusFlow" }],
+  openGraph: {
+    title: "FocusFlow - Master Your Focus",
+    description: "AI-powered focus tracking and productivity analytics",
+    type: "website",
+  },
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable}`}>
-        <AuthSessionProvider>
-          <ThemeProvider
-            attribute="class"
-            defaultTheme="system"
-            enableSystem
-            disableTransitionOnChange
-          >
-            {children}
-            <Analytics />
-          </ThemeProvider>
-        </AuthSessionProvider>
+      <body className={GeistSans.className}>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

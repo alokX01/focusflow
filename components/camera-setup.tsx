@@ -1,292 +1,350 @@
-"use client"
+"use client";
 
-import { useState, useRef } from "react"
-import { Card } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Progress } from "@/components/ui/progress"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Camera, CheckCircle, AlertTriangle, Settings, Eye, Target, Zap } from "lucide-react"
-
+import { useState, useRef, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Camera,
+  CheckCircle,
+  AlertTriangle,
+  Eye,
+  Loader2,
+  XCircle,
+  Info,
+} from "lucide-react";
+import {
+  initializeFaceDetection,
+  requestCameraAccess,
+  analyzeFace,
+  stopCameraStream,
+} from "@/lib/face-detection";
+import { toast } from "sonner";
 
 interface CameraSetupProps {
-  onSetupComplete?: () => void
+  onSetupComplete?: () => void;
 }
 
+type SetupStep = "permission" | "testing" | "complete";
+
 export function CameraSetup({ onSetupComplete }: CameraSetupProps) {
-  const [cameraStatus, setCameraStatus] = useState<"idle" | "requesting" | "granted" | "denied">("idle")
-  const [calibrationStep, setCalibrationStep] = useState(0)
-  const [isCalibrating, setIsCalibrating] = useState(false)
-  const [faceDetected, setFaceDetected] = useState(false)
-  const [gazeAccuracy, setGazeAccuracy] = useState(0)
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [step, setStep] = useState<SetupStep>("permission");
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [faceDetected, setFaceDetected] = useState(false);
+  const [isLookingAtScreen, setIsLookingAtScreen] = useState(false);
+  const [testProgress, setTestProgress] = useState(0);
 
-  const calibrationSteps = [
-    { title: "Look at the center", description: "Keep your eyes on the center dot", position: { x: 50, y: 50 } },
-    { title: "Look top-left", description: "Move your gaze to the top-left corner", position: { x: 20, y: 20 } },
-    { title: "Look top-right", description: "Move your gaze to the top-right corner", position: { x: 80, y: 20 } },
-    { title: "Look bottom-left", description: "Move your gaze to the bottom-left corner", position: { x: 20, y: 80 } },
-    {
-      title: "Look bottom-right",
-      description: "Move your gaze to the bottom-right corner",
-      position: { x: 80, y: 80 },
-    },
-  ]
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animationFrameRef = useRef<number>();
 
-  const requestCameraAccess = async () => {
-    setCameraStatus("requesting")
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (cameraStream) {
+        stopCameraStream(cameraStream);
+      }
+    };
+  }, [cameraStream]);
+
+  // Request camera permission
+  const handleRequestPermission = async () => {
+    setIsLoading(true);
+    setError(null);
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: 640,
-          height: 480,
-          facingMode: "user",
-        },
-      })
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        videoRef.current.play()
+      // Initialize face detection model
+      const modelLoaded = await initializeFaceDetection();
+      if (!modelLoaded) {
+        throw new Error("Failed to load face detection model");
       }
 
-      setCameraStatus("granted")
-      setFaceDetected(true) // Simulate face detection
-    } catch (error) {
-      setCameraStatus("denied")
-      console.error("Camera access denied:", error)
+      // Request camera access
+      const stream = await requestCameraAccess();
+      setCameraStream(stream);
+
+      // Set up video element
+      if (videoRef.current && stream) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+
+        toast.success("Camera enabled!");
+        setStep("testing");
+        startFaceDetection();
+      }
+    } catch (err: any) {
+      setError(err.message);
+      toast.error(err.message);
+    } finally {
+      setIsLoading(false);
     }
-  }
+  };
 
-  const startCalibration = () => {
-    setIsCalibrating(true)
-    setCalibrationStep(0)
-    setGazeAccuracy(0)
-  }
+  // Start face detection loop
+  const startFaceDetection = async () => {
+    let detectionCount = 0;
+    const maxDetections = 50; // Test for ~5 seconds at 10fps
 
-  const nextCalibrationStep = () => {
-    if (calibrationStep < calibrationSteps.length - 1) {
-      setCalibrationStep(calibrationStep + 1)
-      setGazeAccuracy(((calibrationStep + 1) / calibrationSteps.length) * 100)
-    } else {
-      // Calibration complete
-      setIsCalibrating(false)
-      setGazeAccuracy(100)
-      onSetupComplete?.()
+    const detect = async () => {
+      if (videoRef.current && step === "testing") {
+        const result = await analyzeFace(videoRef.current);
+
+        setFaceDetected(result.faceDetected);
+        setIsLookingAtScreen(result.isLookingAtScreen);
+
+        // Update progress
+        detectionCount++;
+        setTestProgress((detectionCount / maxDetections) * 100);
+
+        // Complete after enough detections
+        if (detectionCount >= maxDetections) {
+          setStep("complete");
+          toast.success("Camera setup complete! 🎉");
+          return;
+        }
+
+        // Continue detection
+        animationFrameRef.current = requestAnimationFrame(detect);
+      }
+    };
+
+    detect();
+  };
+
+  // Complete setup
+  const handleComplete = () => {
+    if (cameraStream) {
+      stopCameraStream(cameraStream);
     }
-  }
-
-  const currentStep = calibrationSteps[calibrationStep]
+    onSetupComplete?.();
+  };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Camera Permission */}
-      <Card className="p-6 bg-card/50 backdrop-blur-sm border-border">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Camera className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h3 className="text-lg font-semibold text-foreground">Camera Setup</h3>
-            <p className="text-sm text-muted-foreground">Enable camera access for focus tracking</p>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          {cameraStatus === "idle" && (
-            <div className="text-center py-8">
-              <div className="w-16 h-16 rounded-full bg-muted/30 flex items-center justify-center mx-auto mb-4">
-                <Camera className="w-8 h-8 text-muted-foreground" />
+    <div className="max-w-2xl mx-auto space-y-6">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+      >
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
+                <Camera className="w-6 h-6 text-primary" />
               </div>
-              <h4 className="text-lg font-medium text-foreground mb-2">Camera Access Required</h4>
-              <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
-                FocusFlow needs camera access to track your attention and provide accurate focus metrics. All processing
-                happens locally on your device.
-              </p>
-              <Button onClick={requestCameraAccess} className="gap-2">
-                <Camera className="w-4 h-4" />
-                Enable Camera
-              </Button>
-            </div>
-          )}
-
-          {cameraStatus === "requesting" && (
-            <div className="text-center py-8">
-              <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4 animate-pulse">
-                <Camera className="w-8 h-8 text-primary" />
+              <div>
+                <CardTitle>Camera Setup</CardTitle>
+                <CardDescription>
+                  Enable camera for focus tracking
+                </CardDescription>
               </div>
-              <h4 className="text-lg font-medium text-foreground mb-2">Requesting Camera Access</h4>
-              <p className="text-sm text-muted-foreground">Please allow camera access in your browser</p>
             </div>
-          )}
+          </CardHeader>
 
-          {cameraStatus === "denied" && (
-            <Alert className="border-destructive/50 bg-destructive/10">
-              <AlertTriangle className="h-4 w-4 text-destructive" />
-              <AlertDescription className="text-destructive">
-                Camera access was denied. Please enable camera permissions in your browser settings and refresh the
-                page.
-              </AlertDescription>
-            </Alert>
-          )}
+          <CardContent className="space-y-6">
+            {/* Error Alert */}
+            <AnimatePresence>
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                >
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-          {cameraStatus === "granted" && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <CheckCircle className="w-5 h-5 text-green-500" />
-                  <span className="text-sm font-medium text-foreground">Camera Connected</span>
+            {/* Camera Preview */}
+            <div className="relative rounded-lg overflow-hidden bg-muted aspect-video">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+              />
+              <canvas ref={canvasRef} className="absolute inset-0 hidden" />
+
+              {/* Face Detection Overlay */}
+              {step === "testing" && (
+                <div className="absolute top-4 left-4 flex flex-col gap-2">
+                  <Badge
+                    variant={faceDetected ? "default" : "secondary"}
+                    className="gap-2"
+                  >
+                    {faceDetected ? (
+                      <>
+                        <CheckCircle className="w-3 h-3" />
+                        Face Detected
+                      </>
+                    ) : (
+                      <>
+                        <XCircle className="w-3 h-3" />
+                        No Face
+                      </>
+                    )}
+                  </Badge>
+
+                  <Badge
+                    variant={isLookingAtScreen ? "default" : "destructive"}
+                    className="gap-2"
+                  >
+                    {isLookingAtScreen ? (
+                      <>
+                        <Eye className="w-3 h-3" />
+                        Looking at Screen
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="w-3 h-3" />
+                        Looking Away
+                      </>
+                    )}
+                  </Badge>
                 </div>
-                <Badge variant="default" className="gap-1">
-                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                  Active
-                </Badge>
-              </div>
+              )}
 
-              {/* Camera Preview */}
-              <div className="relative rounded-lg overflow-hidden bg-muted/20">
-                <video ref={videoRef} className="w-full h-48 object-cover" muted playsInline />
-                <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
-
-                {/* Face Detection Overlay */}
-                {faceDetected && (
-                  <div className="absolute top-4 left-4">
-                    <Badge variant="default" className="gap-1 bg-green-500">
-                      <Eye className="w-3 h-3" />
-                      Face Detected
-                    </Badge>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      </Card>
-
-      {/* Calibration */}
-      {cameraStatus === "granted" && (
-        <Card className="p-6 bg-card/50 backdrop-blur-sm border-border">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
-              <Target className="w-5 h-5 text-amber-500" />
-            </div>
-            <div>
-              <h3 className="text-lg font-semibold text-foreground">Gaze Calibration</h3>
-              <p className="text-sm text-muted-foreground">Improve accuracy with personalized calibration</p>
-            </div>
-          </div>
-
-          {!isCalibrating && gazeAccuracy === 0 && (
-            <div className="text-center py-8">
-              <div className="w-16 h-16 rounded-full bg-amber-500/10 flex items-center justify-center mx-auto mb-4">
-                <Target className="w-8 h-8 text-amber-500" />
-              </div>
-              <h4 className="text-lg font-medium text-foreground mb-2">Calibrate Your Gaze</h4>
-              <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
-                Follow the on-screen prompts to calibrate gaze tracking for better accuracy. This takes about 30
-                seconds.
-              </p>
-              <Button onClick={startCalibration} variant="outline" className="gap-2 bg-transparent">
-                <Target className="w-4 h-4" />
-                Start Calibration
-              </Button>
-            </div>
-          )}
-
-          {isCalibrating && (
-            <div className="space-y-6">
-              <div className="text-center">
-                <h4 className="text-lg font-medium text-foreground mb-2">{currentStep.title}</h4>
-                <p className="text-sm text-muted-foreground">{currentStep.description}</p>
-              </div>
-
-              {/* Calibration Area */}
-              <div className="relative w-full h-64 bg-muted/20 rounded-lg overflow-hidden">
-                <div
-                  className="absolute w-4 h-4 bg-primary rounded-full animate-pulse transform -translate-x-1/2 -translate-y-1/2"
-                  style={{
-                    left: `${currentStep.position.x}%`,
-                    top: `${currentStep.position.y}%`,
-                  }}
-                />
-
-                {/* Instructions */}
+              {/* No Camera State */}
+              {!cameraStream && (
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="text-center text-muted-foreground">
-                    <Eye className="w-8 h-8 mx-auto mb-2" />
-                    <p className="text-sm">Look at the glowing dot</p>
+                  <div className="text-center space-y-4">
+                    <Camera className="w-16 h-16 mx-auto text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground">
+                      Camera preview will appear here
+                    </p>
                   </div>
                 </div>
-              </div>
+              )}
+            </div>
 
+            {/* Test Progress */}
+            {step === "testing" && (
               <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Progress</span>
-                  <span className="text-foreground">
-                    {calibrationStep + 1} of {calibrationSteps.length}
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">
+                    Testing camera...
+                  </span>
+                  <span className="font-medium">
+                    {Math.round(testProgress)}%
                   </span>
                 </div>
-                <Progress value={((calibrationStep + 1) / calibrationSteps.length) * 100} className="h-2" />
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-primary"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${testProgress}%` }}
+                    transition={{ duration: 0.3 }}
+                  />
+                </div>
               </div>
+            )}
 
-              <div className="text-center">
-                <Button onClick={nextCalibrationStep} className="gap-2">
-                  <CheckCircle className="w-4 h-4" />
-                  {calibrationStep < calibrationSteps.length - 1 ? "Next Step" : "Complete Calibration"}
+            {/* Instructions */}
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertDescription>
+                {step === "permission" && (
+                  <>
+                    Click "Enable Camera" to allow camera access for focus
+                    tracking.
+                  </>
+                )}
+                {step === "testing" && (
+                  <>
+                    Look at the screen and keep your face in view while we test
+                    the detection.
+                  </>
+                )}
+                {step === "complete" && (
+                  <>
+                    Camera setup complete! You can now start your focus session.
+                  </>
+                )}
+              </AlertDescription>
+            </Alert>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3">
+              {step === "permission" && (
+                <Button
+                  onClick={handleRequestPermission}
+                  disabled={isLoading}
+                  className="flex-1 gap-2"
+                  size="lg"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Loading...
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="w-4 h-4" />
+                      Enable Camera
+                    </>
+                  )}
                 </Button>
-              </div>
-            </div>
-          )}
+              )}
 
-          {gazeAccuracy === 100 && (
-            <div className="text-center py-8">
-              <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-4">
-                <CheckCircle className="w-8 h-8 text-green-500" />
-              </div>
-              <h4 className="text-lg font-medium text-foreground mb-2">Calibration Complete!</h4>
-              <p className="text-sm text-muted-foreground mb-4">
-                Your gaze tracking is now calibrated for optimal accuracy.
-              </p>
-              <Badge variant="default" className="gap-1">
-                <Zap className="w-3 h-3" />
-                Ready for Focus Tracking
-              </Badge>
+              {step === "testing" && (
+                <Button
+                  onClick={() => setStep("complete")}
+                  variant="outline"
+                  className="flex-1"
+                >
+                  Skip Test
+                </Button>
+              )}
+
+              {step === "complete" && (
+                <Button
+                  onClick={handleComplete}
+                  className="flex-1 gap-2"
+                  size="lg"
+                >
+                  <CheckCircle className="w-4 w-4" />
+                  Start Focus Session
+                </Button>
+              )}
             </div>
-          )}
+
+            {/* Privacy Notice */}
+            <div className="border-t border-border pt-4 space-y-2">
+              <p className="text-sm font-medium">Privacy & Security</p>
+              <div className="space-y-1 text-xs text-muted-foreground">
+                <div className="flex items-start gap-2">
+                  <CheckCircle className="w-3 h-3 text-green-500 mt-0.5 flex-shrink-0" />
+                  <span>All processing happens locally on your device</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <CheckCircle className="w-3 h-3 text-green-500 mt-0.5 flex-shrink-0" />
+                  <span>No video data is ever transmitted or stored</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <CheckCircle className="w-3 h-3 text-green-500 mt-0.5 flex-shrink-0" />
+                  <span>You can disable camera tracking anytime</span>
+                </div>
+              </div>
+            </div>
+          </CardContent>
         </Card>
-      )}
-
-      {/* Privacy Notice */}
-      <Card className="p-6 bg-card/50 backdrop-blur-sm border-border">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
-            <Settings className="w-5 h-5 text-blue-500" />
-          </div>
-          <div>
-            <h3 className="text-lg font-semibold text-foreground">Privacy & Security</h3>
-            <p className="text-sm text-muted-foreground">Your data stays on your device</p>
-          </div>
-        </div>
-
-        <div className="space-y-3 text-sm text-muted-foreground">
-          <div className="flex items-start gap-2">
-            <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
-            <span>All camera processing happens locally on your device</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
-            <span>No video data is ever transmitted or stored remotely</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
-            <span>Only focus metrics are saved to improve your productivity</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
-            <span>You can disable camera tracking at any time in settings</span>
-          </div>
-        </div>
-      </Card>
+      </motion.div>
     </div>
-  )
+  );
 }

@@ -1,137 +1,197 @@
 "use client";
 
-import { useState } from "react";
-import { Card } from "@/components/ui/card";
+import { useState, useEffect } from "react";
+import { motion } from "framer-motion";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Filter, TrendingUp, Clock, Eye, Target, Download } from "lucide-react";
+  Filter,
+  TrendingUp,
+  Clock,
+  Eye,
+  Target,
+  Download,
+  Calendar,
+  X,
+} from "lucide-react";
 import { MonthlyChart } from "@/components/monthly-chart";
-import { SessionDetails } from "@/components/session-details";
+import { toast } from "sonner";
 
-// Mock historical data
-const historicalSessions = [
-  {
-    id: 1,
-    date: "2024-01-15",
-    sessions: [
-      {
-        time: "09:30",
-        duration: 25,
-        focusScore: 89,
-        distractions: 3,
-        type: "work",
-      },
-      {
-        time: "10:00",
-        duration: 5,
-        focusScore: 95,
-        distractions: 0,
-        type: "break",
-      },
-      {
-        time: "10:05",
-        duration: 25,
-        focusScore: 76,
-        distractions: 5,
-        type: "work",
-      },
-      {
-        time: "14:15",
-        duration: 25,
-        focusScore: 82,
-        distractions: 4,
-        type: "work",
-      },
-    ],
-    totalFocusTime: 75,
-    averageFocusScore: 82,
-    totalDistractions: 12,
-  },
-  {
-    id: 2,
-    date: "2024-01-14",
-    sessions: [
-      {
-        time: "10:00",
-        duration: 25,
-        focusScore: 94,
-        distractions: 1,
-        type: "work",
-      },
-      {
-        time: "10:30",
-        duration: 5,
-        focusScore: 98,
-        distractions: 0,
-        type: "break",
-      },
-      {
-        time: "16:30",
-        duration: 25,
-        focusScore: 68,
-        distractions: 7,
-        type: "work",
-      },
-    ],
-    totalFocusTime: 50,
-    averageFocusScore: 81,
-    totalDistractions: 8,
-  },
-  {
-    id: 3,
-    date: "2024-01-13",
-    sessions: [
-      {
-        time: "09:00",
-        duration: 25,
-        focusScore: 91,
-        distractions: 2,
-        type: "work",
-      },
-      {
-        time: "11:15",
-        duration: 25,
-        focusScore: 87,
-        distractions: 3,
-        type: "work",
-      },
-      {
-        time: "15:45",
-        duration: 25,
-        focusScore: 79,
-        distractions: 6,
-        type: "work",
-      },
-    ],
-    totalFocusTime: 75,
-    averageFocusScore: 86,
-    totalDistractions: 11,
-  },
-];
+interface Session {
+  id: string;
+  time: string;
+  duration: number;
+  focusScore: number;
+  distractions: number;
+  type: "focus" | "break" | "pomodoro";
+  goal?: string;
+  tags?: string[];
+}
 
-const monthlyStats = {
-  totalSessions: 45,
-  totalFocusTime: 18.5, // hours
-  averageFocusScore: 84,
-  bestDay: { date: "2024-01-10", score: 96 },
-  improvement: 15, // percentage
-};
+interface DayData {
+  id: string;
+  date: string;
+  sessions: Session[];
+  totalFocusTime: number;
+  averageFocusScore: number;
+  totalDistractions: number;
+}
+
+type Period = "week" | "month" | "quarter" | "year";
 
 export function HistoryInterface() {
-  const [selectedPeriod, setSelectedPeriod] = useState("week");
-  const [selectedSession, setSelectedSession] = useState<any>(null);
+  const [selectedPeriod, setSelectedPeriod] = useState<Period>("week");
+  const [historicalSessions, setHistoricalSessions] = useState<DayData[]>([]);
+  const [selectedSession, setSelectedSession] = useState<
+    (Session & { date: string }) | null
+  >(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [monthlyStats, setMonthlyStats] = useState({
+    totalSessions: 0,
+    totalFocusTime: 0,
+    averageFocusScore: 0,
+    bestDay: { date: "", score: 0 },
+    improvement: 0,
+  });
+
+  useEffect(() => {
+    fetchHistoricalData();
+  }, [selectedPeriod]);
+
+  const fetchHistoricalData = async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch(
+        `/api/sessions?period=${selectedPeriod}&limit=30`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        // Process and group sessions by day
+        const groupedSessions = groupSessionsByDay(data.sessions);
+        setHistoricalSessions(groupedSessions);
+
+        // Calculate stats
+        calculateMonthlyStats(data.sessions);
+      }
+    } catch (error) {
+      console.error("Failed to fetch history:", error);
+      toast.error("Failed to load session history");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const groupSessionsByDay = (sessions: any[]): DayData[] => {
+    const grouped = sessions.reduce((acc: any, session: any) => {
+      const date = new Date(session.startTime).toISOString().split("T")[0];
+      if (!acc[date]) {
+        acc[date] = {
+          id: date,
+          date,
+          sessions: [],
+          totalFocusTime: 0,
+          totalDistractions: 0,
+          averageFocusScore: 0,
+        };
+      }
+
+      acc[date].sessions.push({
+        id: session._id,
+        time: new Date(session.startTime).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        duration: Math.round(session.duration / 60),
+        focusScore: session.focusPercentage,
+        distractions: session.distractionCount,
+        type: session.sessionType,
+        goal: session.goal,
+        tags: session.tags,
+      });
+
+      acc[date].totalFocusTime += Math.round(session.duration / 60);
+      acc[date].totalDistractions += session.distractionCount;
+
+      return acc;
+    }, {});
+
+    // Calculate averages
+    Object.values(grouped).forEach((day: any) => {
+      day.averageFocusScore = Math.round(
+        day.sessions.reduce(
+          (sum: number, s: Session) => sum + s.focusScore,
+          0
+        ) / day.sessions.length
+      );
+    });
+
+    return Object.values(grouped).sort(
+      (a: any, b: any) =>
+        new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+  };
+
+  const calculateMonthlyStats = (sessions: any[]) => {
+    if (sessions.length === 0) return;
+
+    const totalFocusMinutes = sessions.reduce(
+      (sum, s) => sum + s.duration / 60,
+      0
+    );
+    const avgScore = Math.round(
+      sessions.reduce((sum, s) => sum + s.focusPercentage, 0) / sessions.length
+    );
+
+    // Find best day
+    const dailyScores = groupSessionsByDay(sessions);
+    const bestDay = dailyScores.reduce((best, day) =>
+      day.averageFocusScore > best.averageFocusScore ? day : best
+    );
+
+    setMonthlyStats({
+      totalSessions: sessions.length,
+      totalFocusTime: Math.round((totalFocusMinutes / 60) * 10) / 10,
+      averageFocusScore: avgScore,
+      bestDay: {
+        date: bestDay.date,
+        score: bestDay.averageFocusScore,
+      },
+      improvement: 15, // TODO: Calculate actual improvement
+    });
+  };
+
+  const handleExport = async () => {
+    try {
+      const response = await fetch(`/api/export?period=${selectedPeriod}`);
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `focusflow-history-${selectedPeriod}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        toast.success("History exported successfully!");
+      }
+    } catch (error) {
+      toast.error("Failed to export history");
+    }
+  };
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString("en-US", {
+    return new Date(dateString).toLocaleDateString("en-US", {
       weekday: "long",
       year: "numeric",
       month: "long",
@@ -141,243 +201,472 @@ export function HistoryInterface() {
 
   const getFocusScoreColor = (score: number) => {
     if (score >= 90) return "text-green-500";
-    if (score >= 75) return "text-amber-500";
+    if (score >= 75) return "text-blue-500";
+    if (score >= 60) return "text-amber-500";
     return "text-red-500";
   };
 
-  const getFocusScoreBadge = (score: number) => {
-    if (score >= 90) return "default";
-    if (score >= 75) return "secondary";
+  const getFocusScoreBadge = (
+    score: number
+  ): "default" | "secondary" | "destructive" => {
+    if (score >= 80) return "default";
+    if (score >= 60) return "secondary";
     return "destructive";
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Controls */}
-      <div className="flex items-center justify-between text-foreground">
-        <div className="flex items-center gap-4">
-          <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
-            <SelectTrigger className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="week">Last Week</SelectItem>
-              <SelectItem value="month">Last Month</SelectItem>
-              <SelectItem value="quarter">Last Quarter</SelectItem>
-              <SelectItem value="year">Last Year</SelectItem>
-            </SelectContent>
-          </Select>
+      <motion.div
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+      >
+        <Tabs
+          value={selectedPeriod}
+          onValueChange={(v) => setSelectedPeriod(v as Period)}
+        >
+          <TabsList>
+            <TabsTrigger value="week">Week</TabsTrigger>
+            <TabsTrigger value="month">Month</TabsTrigger>
+            <TabsTrigger value="quarter">Quarter</TabsTrigger>
+            <TabsTrigger value="year">Year</TabsTrigger>
+          </TabsList>
+        </Tabs>
 
-          <Button variant="outline" size="sm" className="gap-2 bg-transparent">
-            <Filter className="w-4 h-4" />
-            Filter
-          </Button>
-        </div>
-
-        <Button variant="outline" size="sm" className="gap-2 bg-transparent">
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-2"
+          onClick={handleExport}
+        >
           <Download className="w-4 h-4" />
           Export
         </Button>
-      </div>
+      </motion.div>
 
       {/* Monthly Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card className="p-6 bg-card/50 backdrop-blur-sm border-border">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">
-                Total Sessions
-              </p>
-              <p className="text-2xl font-bold text-foreground">
-                {monthlyStats.totalSessions}
-              </p>
-            </div>
-            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Target className="w-5 h-5 text-primary" />
-            </div>
-          </div>
-          <div className="flex items-center gap-1 mt-2">
-            <TrendingUp className="w-3 h-3 text-green-500" />
-            <span className="text-xs text-green-500">
-              +{monthlyStats.improvement}% this month
-            </span>
-          </div>
-        </Card>
+      {isLoading ? (
+        <StatsLoading />
+      ) : (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.1 }}
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
+        >
+          <StatCard
+            icon={Target}
+            label="Total Sessions"
+            value={monthlyStats.totalSessions}
+            subtext={`+${monthlyStats.improvement}% this ${selectedPeriod}`}
+            color="bg-primary"
+            trend
+          />
+          <StatCard
+            icon={Clock}
+            label="Focus Time"
+            value={`${monthlyStats.totalFocusTime}h`}
+            subtext={`${Math.round(
+              (monthlyStats.totalFocusTime / monthlyStats.totalSessions) * 60
+            )}min avg`}
+            color="bg-green-500"
+          />
+          <StatCard
+            icon={Eye}
+            label="Avg Focus Score"
+            value={`${monthlyStats.averageFocusScore}%`}
+            color="bg-blue-500"
+            showProgress
+            progressValue={monthlyStats.averageFocusScore}
+          />
+          <StatCard
+            icon={TrendingUp}
+            label="Best Day"
+            value={`${monthlyStats.bestDay.score}%`}
+            subtext={new Date(monthlyStats.bestDay.date).toLocaleDateString()}
+            color="bg-amber-500"
+          />
+        </motion.div>
+      )}
 
-        <Card className="p-6 bg-card/50 backdrop-blur-sm border-border">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">Focus Time</p>
-              <p className="text-2xl font-bold text-foreground">
-                {monthlyStats.totalFocusTime}h
-              </p>
-            </div>
-            <div className="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center">
-              <Clock className="w-5 h-5 text-green-500" />
-            </div>
-          </div>
-          <div className="flex items-center gap-1 mt-2">
-            <span className="text-xs text-muted-foreground">
-              Daily average: 37min
-            </span>
-          </div>
+      {/* Monthly Chart */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.2 }}
+      >
+        <Card>
+          <CardHeader>
+            <CardTitle>Monthly Progress</CardTitle>
+            <CardDescription>Your focus score trend over time</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <Skeleton className="h-64 w-full" />
+            ) : (
+              <MonthlyChart data={historicalSessions} />
+            )}
+          </CardContent>
         </Card>
-
-        <Card className="p-6 bg-card/50 backdrop-blur-sm border-border">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">
-                Avg Focus Score
-              </p>
-              <p className="text-2xl font-bold text-foreground">
-                {monthlyStats.averageFocusScore}%
-              </p>
-            </div>
-            <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
-              <Eye className="w-5 h-5 text-blue-500" />
-            </div>
-          </div>
-          <div className="mt-2">
-            <Progress value={monthlyStats.averageFocusScore} className="h-1" />
-          </div>
-        </Card>
-
-        <Card className="p-6 bg-card/50 backdrop-blur-sm border-border">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">Best Day</p>
-              <p className="text-2xl font-bold text-foreground">
-                {monthlyStats.bestDay.score}%
-              </p>
-            </div>
-            <div className="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
-              <TrendingUp className="w-5 h-5 text-amber-500" />
-            </div>
-          </div>
-          <div className="flex items-center gap-1 mt-2">
-            <span className="text-xs text-muted-foreground">
-              {new Date(monthlyStats.bestDay.date).toLocaleDateString()}
-            </span>
-          </div>
-        </Card>
-      </div>
-
-      {/* Monthly Progress Chart */}
-      <Card className="p-6 bg-card/50 backdrop-blur-sm border-border">
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold text-foreground mb-2">
-            Monthly Progress
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            Your focus score trend over the past month
-          </p>
-        </div>
-        <MonthlyChart />
-      </Card>
+      </motion.div>
 
       {/* Daily Sessions */}
-      <Card className="p-6 bg-card/50 backdrop-blur-sm border-border">
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold text-foreground mb-2">
-            Recent Sessions
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            Detailed breakdown of your focus sessions
-          </p>
-        </div>
-
-        <div className="space-y-6">
-          {historicalSessions.map((day) => (
-            <div key={day.id} className="space-y-4">
-              {/* Day Header */}
-              <div className="flex items-center justify-between pb-2 border-b border-border">
-                <div>
-                  <h4 className="font-medium text-foreground">
-                    {formatDate(day.date)}
-                  </h4>
-                  <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
-                    <span>{day.sessions.length} sessions</span>
-                    <span>{day.totalFocusTime}min total</span>
-                    <span className={getFocusScoreColor(day.averageFocusScore)}>
-                      {day.averageFocusScore}% avg focus
-                    </span>
-                  </div>
-                </div>
-                <Badge variant={getFocusScoreBadge(day.averageFocusScore)}>
-                  {day.averageFocusScore}%
-                </Badge>
-              </div>
-
-              {/* Sessions */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {day.sessions.map((session, index) => (
-                  <div
-                    key={index}
-                    className="p-4 rounded-lg border border-border bg-muted/20 hover:bg-muted/30 transition-colors cursor-pointer"
-                    onClick={() =>
-                      setSelectedSession({ ...session, date: day.date })
-                    }
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-sm font-medium text-foreground">
-                        {session.time}
-                      </div>
-                      <Badge
-                        variant={
-                          session.type === "work" ? "default" : "secondary"
-                        }
-                        className="text-xs"
-                      >
-                        {session.type}
-                      </Badge>
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">Duration</span>
-                        <span className="text-foreground">
-                          {session.duration}min
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">Focus</span>
-                        <span
-                          className={getFocusScoreColor(session.focusScore)}
-                        >
-                          {session.focusScore}%
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">
-                          Distractions
-                        </span>
-                        <span className="text-foreground">
-                          {session.distractions}
-                        </span>
-                      </div>
-
-                      <Progress
-                        value={session.focusScore}
-                        className="h-1 mt-2"
-                      />
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3 }}
+      >
+        <Card>
+          <CardHeader>
+            <CardTitle>Session History</CardTitle>
+            <CardDescription>
+              Detailed breakdown of your focus sessions
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <div className="space-y-6">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="space-y-3">
+                    <Skeleton className="h-12 w-full" />
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {[1, 2, 3].map((j) => (
+                        <Skeleton key={j} className="h-32 w-full" />
+                      ))}
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
-          ))}
-        </div>
-      </Card>
+            ) : historicalSessions.length === 0 ? (
+              <div className="text-center py-12">
+                <Calendar className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                <p className="text-muted-foreground">No sessions found</p>
+                <p className="text-sm text-muted-foreground">
+                  Start a focus session to see your history
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {historicalSessions.map((day, dayIndex) => (
+                  <motion.div
+                    key={day.id}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: dayIndex * 0.05 }}
+                    className="space-y-4"
+                  >
+                    {/* Day Header */}
+                    <div className="flex items-center justify-between pb-2 border-b border-border">
+                      <div>
+                        <h4 className="font-medium">{formatDate(day.date)}</h4>
+                        <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
+                          <span>{day.sessions.length} sessions</span>
+                          <span>{day.totalFocusTime}min total</span>
+                          <span
+                            className={getFocusScoreColor(
+                              day.averageFocusScore
+                            )}
+                          >
+                            {day.averageFocusScore}% avg
+                          </span>
+                        </div>
+                      </div>
+                      <Badge
+                        variant={getFocusScoreBadge(day.averageFocusScore)}
+                      >
+                        {day.averageFocusScore}%
+                      </Badge>
+                    </div>
+
+                    {/* Sessions Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {day.sessions.map((session, sessionIndex) => (
+                        <motion.div
+                          key={session.id}
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                          onClick={() =>
+                            setSelectedSession({ ...session, date: day.date })
+                          }
+                          className="p-4 rounded-lg border border-border hover:border-primary/50 transition-all cursor-pointer bg-card"
+                        >
+                          <div className="flex items-center justify-between mb-3">
+                            <span className="text-sm font-medium">
+                              {session.time}
+                            </span>
+                            <Badge
+                              variant={
+                                session.type === "focus"
+                                  ? "default"
+                                  : "secondary"
+                              }
+                              className="text-xs"
+                            >
+                              {session.type}
+                            </Badge>
+                          </div>
+
+                          <div className="space-y-2">
+                            <div className="flex justify-between text-sm">
+                              <span className="text-muted-foreground">
+                                Duration
+                              </span>
+                              <span className="font-medium">
+                                {session.duration}min
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-muted-foreground">
+                                Focus
+                              </span>
+                              <span
+                                className={getFocusScoreColor(
+                                  session.focusScore
+                                )}
+                              >
+                                {session.focusScore}%
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-muted-foreground">
+                                Distractions
+                              </span>
+                              <span>{session.distractions}</span>
+                            </div>
+                          </div>
+
+                          <Progress
+                            value={session.focusScore}
+                            className="h-1 mt-3"
+                          />
+
+                          {session.goal && (
+                            <p className="text-xs text-muted-foreground mt-2 line-clamp-1">
+                              🎯 {session.goal}
+                            </p>
+                          )}
+                        </motion.div>
+                      ))}
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
 
       {/* Session Details Modal */}
       {selectedSession && (
-        <SessionDetails
+        <SessionDetailsModal
           session={selectedSession}
           onClose={() => setSelectedSession(null)}
         />
       )}
+    </div>
+  );
+}
+
+// Stat Card Component
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  subtext,
+  color,
+  trend,
+  showProgress,
+  progressValue,
+}: {
+  icon: any;
+  label: string;
+  value: string | number;
+  subtext?: string;
+  color: string;
+  trend?: boolean;
+  showProgress?: boolean;
+  progressValue?: number;
+}) {
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <div className="flex items-center justify-between mb-3">
+          <div
+            className={`w-12 h-12 rounded-lg ${color}/10 flex items-center justify-center`}
+          >
+            <Icon className={`w-6 h-6 ${color.replace("bg-", "text-")}`} />
+          </div>
+          {trend && <TrendingUp className="w-4 h-4 text-green-500" />}
+        </div>
+        <div className="space-y-1">
+          <p className="text-sm text-muted-foreground">{label}</p>
+          <p className="text-2xl font-bold">{value}</p>
+          {subtext && (
+            <p className="text-xs text-muted-foreground">{subtext}</p>
+          )}
+        </div>
+        {showProgress && progressValue !== undefined && (
+          <Progress value={progressValue} className="h-1 mt-3" />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Session Details Modal
+function SessionDetailsModal({
+  session,
+  onClose,
+}: {
+  session: Session & { date: string };
+  onClose: () => void;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.95, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.95, opacity: 0 }}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-2xl"
+      >
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Session Details</CardTitle>
+                <CardDescription>
+                  {new Date(session.date).toLocaleDateString()} at{" "}
+                  {session.time}
+                </CardDescription>
+              </div>
+              <Button variant="ghost" size="sm" onClick={onClose}>
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Stats Grid */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="text-center p-4 rounded-lg bg-muted/30">
+                <Clock className="w-5 h-5 mx-auto mb-2 text-primary" />
+                <div className="text-lg font-bold">{session.duration}min</div>
+                <div className="text-xs text-muted-foreground">Duration</div>
+              </div>
+              <div className="text-center p-4 rounded-lg bg-muted/30">
+                <Eye className="w-5 h-5 mx-auto mb-2 text-blue-500" />
+                <div className="text-lg font-bold">{session.focusScore}%</div>
+                <div className="text-xs text-muted-foreground">Focus Score</div>
+              </div>
+              <div className="text-center p-4 rounded-lg bg-muted/30">
+                <TrendingUp className="w-5 h-5 mx-auto mb-2 text-green-500" />
+                <div className="text-lg font-bold">
+                  {Math.round(session.duration * (session.focusScore / 100))}min
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Focused Time
+                </div>
+              </div>
+              <div className="text-center p-4 rounded-lg bg-muted/30">
+                <Target className="w-5 h-5 mx-auto mb-2 text-amber-500" />
+                <div className="text-lg font-bold">{session.distractions}</div>
+                <div className="text-xs text-muted-foreground">
+                  Distractions
+                </div>
+              </div>
+            </div>
+
+            {/* Goal */}
+            {session.goal && (
+              <div className="p-4 rounded-lg border border-border">
+                <p className="text-sm font-medium mb-1">Session Goal</p>
+                <p className="text-muted-foreground">{session.goal}</p>
+              </div>
+            )}
+
+            {/* Tags */}
+            {session.tags && session.tags.length > 0 && (
+              <div>
+                <p className="text-sm font-medium mb-2">Tags</p>
+                <div className="flex flex-wrap gap-2">
+                  {session.tags.map((tag, i) => (
+                    <Badge key={i} variant="secondary">
+                      {tag}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Focus Timeline Placeholder */}
+            <div>
+              <p className="text-sm font-medium mb-3">Focus Timeline</p>
+              <div className="h-8 bg-muted/30 rounded-lg overflow-hidden flex">
+                <div
+                  className="bg-green-500"
+                  style={{ width: `${session.focusScore}%` }}
+                />
+                <div
+                  className="bg-red-500"
+                  style={{ width: `${100 - session.focusScore}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                <span>Start</span>
+                <span>End</span>
+              </div>
+            </div>
+
+            {/* Overall Performance */}
+            <div className="border-t border-border pt-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Overall Performance</p>
+                  <p className="text-xs text-muted-foreground">
+                    {session.focusScore >= 90
+                      ? "Excellent focus!"
+                      : session.focusScore >= 75
+                      ? "Good session"
+                      : "Room for improvement"}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <div className="text-lg font-bold">{session.focusScore}%</div>
+                  <Progress
+                    value={session.focusScore}
+                    className="w-24 h-1 mt-1"
+                  />
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+// Loading States
+function StatsLoading() {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {[1, 2, 3, 4].map((i) => (
+        <Card key={i}>
+          <CardContent className="p-6 space-y-3">
+            <Skeleton className="h-12 w-12 rounded-lg" />
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-8 w-16" />
+            <Skeleton className="h-3 w-32" />
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
 }

@@ -1,229 +1,234 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth/next'
-import { getDatabase } from '@/lib/mongodb'
-import { authOptions } from '@/lib/auth'
-import { FocusSession } from '@/lib/models'
-import { ObjectId, WithId, Filter } from 'mongodb'
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import { getDatabase } from "@/lib/mongodb";
+import { authOptions } from "@/lib/auth";
+import { ObjectId } from "mongodb";
+import { z } from "zod";
+import { apiResponse, apiError, handleApiError } from "@/lib/api";
 
-export const dynamic = 'force-dynamic'
+export const dynamic = "force-dynamic";
 
-// Helper function to validate ObjectId
-function isValidObjectId(id: string): boolean {
-  try {
-    new ObjectId(id)
-    return true
-  } catch {
-    return false
-  }
-}
+// ============================================
+// VALIDATION SCHEMA
+// ============================================
 
-// Type for params (handle both sync and async params)
-type Params = {
-  params: { id: string } | Promise<{ id: string }>
-}
+const UpdateSessionSchema = z.object({
+  duration: z.number().min(0).optional(),
+  focusPercentage: z.number().min(0).max(100).optional(),
+  distractionCount: z.number().min(0).optional(),
+  isCompleted: z.boolean().optional(),
+  endTime: z.string().datetime().optional(),
+  goal: z.string().max(200).optional(),
+  tags: z.array(z.string()).max(10).optional(),
+});
 
-// GET /api/sessions/[id] - Get a specific session
+// ============================================
+// GET - Get Single Session
+// ============================================
+
 export async function GET(
   request: NextRequest,
-  { params }: Params
+  { params }: { params: { id: string } }
 ) {
   try {
-    // Handle both sync and async params
-    const resolvedParams = await Promise.resolve(params)
-    const { id } = resolvedParams
-    
-    // Check authentication
-    const session = await getServerSession(authOptions)
+    const session = await getServerSession(authOptions);
+
     if (!session?.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return apiError("Unauthorized", 401);
     }
 
-    const userId = (session.user as any).id || session.user.email
-    
-    // Validate the ID format
-    if (!isValidObjectId(id)) {
-      return NextResponse.json({ error: 'Invalid session ID' }, { status: 400 })
+    const userId = (session.user as any).id || session.user.email;
+    const db = await getDatabase();
+
+    // Validate ObjectId
+    if (!ObjectId.isValid(params.id)) {
+      return apiError("Invalid session ID", 400);
     }
 
-    const db = await getDatabase()
-    
-    // Use proper typing for the filter
-    const filter: Filter<FocusSession> = {
-      _id: new ObjectId(id) as any,  // Type assertion to bypass the strict typing
-      userId: userId
-    }
-    
-    const focusSession = await db
-      .collection<FocusSession>('sessions')
-      .findOne(filter) as WithId<FocusSession> | null
+    const sessionData = await db.collection("sessions").findOne({
+      _id: new ObjectId(params.id),
+      userId,
+    });
 
-    if (!focusSession) {
-      return NextResponse.json({ error: 'Session not found' }, { status: 404 })
+    if (!sessionData) {
+      return apiError("Session not found", 404);
     }
 
-    // Convert _id to string for frontend
-    const sessionWithStringId = {
-      ...focusSession,
-      _id: focusSession._id.toString()
-    }
+    // Fetch distractions for this session
+    const distractions = await db
+      .collection("distractions")
+      .find({ sessionId: new ObjectId(params.id) })
+      .sort({ timestamp: 1 })
+      .toArray();
 
-    return NextResponse.json({ session: sessionWithStringId })
+    return apiResponse({
+      session: {
+        ...sessionData,
+        _id: sessionData._id.toString(),
+        distractions: distractions.map((d) => ({
+          ...d,
+          _id: d._id.toString(),
+          sessionId: d.sessionId.toString(),
+        })),
+      },
+    });
   } catch (error) {
-    console.error('Error fetching session:', error)
-    return NextResponse.json({ error: 'Failed to fetch session' }, { status: 500 })
+    return handleApiError(error);
   }
 }
 
-// PUT /api/sessions/[id] - Update a session
-export async function PUT(
+// ============================================
+// PATCH - Update Single Session
+// ============================================
+
+export async function PATCH(
   request: NextRequest,
-  { params }: Params
+  { params }: { params: { id: string } }
 ) {
   try {
-    // Handle both sync and async params
-    const resolvedParams = await Promise.resolve(params)
-    const { id } = resolvedParams
-    
-    // Check authentication (optional for testing)
-    const session = await getServerSession(authOptions)
-    
+    const session = await getServerSession(authOptions);
+
     if (!session?.user) {
-      console.log('Warning: Updating session without authentication')
-    }
-    
-    const userId = session?.user ? ((session.user as any).id || session.user.email) : null
-    
-    // Validate the ID format
-    if (!isValidObjectId(id)) {
-      return NextResponse.json({ error: 'Invalid session ID' }, { status: 400 })
+      return apiError("Unauthorized", 401);
     }
 
-    const body = await request.json()
-    const { 
-      endTime, 
-      duration, 
-      focusPercentage, 
-      distractionCount, 
-      isCompleted,
-      distractions 
-    } = body
+    const userId = (session.user as any).id || session.user.email;
+    const body = await request.json();
 
-    // Build update object
-    const updateData: Partial<FocusSession> = {
-      updatedAt: new Date()
+    // Validate input
+    const validated = UpdateSessionSchema.parse(body);
+
+    const db = await getDatabase();
+
+    // Validate ObjectId
+    if (!ObjectId.isValid(params.id)) {
+      return apiError("Invalid session ID", 400);
     }
 
-    if (endTime !== undefined) updateData.endTime = new Date(endTime)
-    if (duration !== undefined) updateData.duration = duration
-    if (focusPercentage !== undefined) updateData.focusPercentage = focusPercentage
-    if (distractionCount !== undefined) updateData.distractionCount = distractionCount
-    if (isCompleted !== undefined) updateData.isCompleted = isCompleted
-    if (distractions !== undefined) updateData.distractions = distractions
+    // Prepare update data
+    const updateData: any = {
+      ...validated,
+      updatedAt: new Date(),
+    };
 
-    const db = await getDatabase()
-    
-    // Build query with proper typing
-    const query: Filter<FocusSession> = { 
-      _id: new ObjectId(id) as any 
-    }
-    
-    if (userId) {
-      query.userId = userId
-    }
-    
-    // Perform the update
-    const result = await db
-      .collection<FocusSession>('sessions')
-      .updateOne(query, { $set: updateData })
-
-    if (result.matchedCount === 0) {
-      return NextResponse.json({ error: 'Session not found' }, { status: 404 })
+    // Convert endTime string to Date if provided
+    if (validated.endTime) {
+      updateData.endTime = new Date(validated.endTime);
     }
 
-    // Fetch and return the updated session
-    const updatedSession = await db
-      .collection<FocusSession>('sessions')
-      .findOne({ _id: new ObjectId(id) as any }) as WithId<FocusSession> | null
+    // Set completedAt if marking as completed
+    if (validated.isCompleted && !updateData.completedAt) {
+      updateData.completedAt = new Date();
+    }
 
-    if (updatedSession) {
-      return NextResponse.json({ 
-        message: 'Session updated successfully',
+    // Update session
+    const result = await db.collection("sessions").findOneAndUpdate(
+      {
+        _id: new ObjectId(params.id),
+        userId,
+      },
+      { $set: updateData },
+      { returnDocument: "after" }
+    );
+
+    if (!result) {
+      return apiError("Session not found or update failed", 404);
+    }
+
+    // Update daily stats if completed
+    if (validated.isCompleted) {
+      await updateDailyStats(db, userId);
+    }
+
+    return apiResponse(
+      {
         session: {
-          ...updatedSession,
-          _id: updatedSession._id.toString()
-        }
-      })
-    }
-
-    return NextResponse.json({ 
-      message: 'Session updated successfully',
-      updated: result.modifiedCount
-    })
+          ...result,
+          _id: result._id.toString(),
+        },
+      },
+      200,
+      "Session updated successfully"
+    );
   } catch (error) {
-    console.error('Error updating session:', error)
-    return NextResponse.json({ 
-      error: 'Failed to update session',
-      details: error instanceof Error ? error.message : 'Unknown error'
-    }, { status: 500 })
+    return handleApiError(error);
   }
 }
 
-// DELETE /api/sessions/[id] - Delete a session
+// ============================================
+// DELETE - Delete Single Session
+// ============================================
+
 export async function DELETE(
   request: NextRequest,
-  { params }: Params
+  { params }: { params: { id: string } }
 ) {
   try {
-    // Handle both sync and async params
-    const resolvedParams = await Promise.resolve(params)
-    const { id } = resolvedParams
-    
-    // Check authentication
-    const session = await getServerSession(authOptions)
+    const session = await getServerSession(authOptions);
+
     if (!session?.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return apiError("Unauthorized", 401);
     }
 
-    const userId = (session.user as any).id || session.user.email
-    
-    // Validate the ID format
-    if (!isValidObjectId(id)) {
-      return NextResponse.json({ error: 'Invalid session ID' }, { status: 400 })
+    const userId = (session.user as any).id || session.user.email;
+    const db = await getDatabase();
+
+    // Validate ObjectId
+    if (!ObjectId.isValid(params.id)) {
+      return apiError("Invalid session ID", 400);
     }
 
-    const db = await getDatabase()
-    
-    // Check ownership before deleting with proper typing
-    const filter: Filter<FocusSession> = {
-      _id: new ObjectId(id) as any,
-      userId: userId
-    }
-    
-    const existingSession = await db
-      .collection<FocusSession>('sessions')
-      .findOne(filter) as WithId<FocusSession> | null
+    // Delete session and associated distractions
+    const [sessionResult, distractionsResult] = await Promise.all([
+      db.collection("sessions").deleteOne({
+        _id: new ObjectId(params.id),
+        userId,
+      }),
+      db.collection("distractions").deleteMany({
+        sessionId: new ObjectId(params.id),
+      }),
+    ]);
 
-    if (!existingSession) {
-      return NextResponse.json({ 
-        error: 'Session not found or unauthorized' 
-      }, { status: 404 })
+    if (sessionResult.deletedCount === 0) {
+      return apiError("Session not found", 404);
     }
 
-    // Delete the session
-    const result = await db
-      .collection<FocusSession>('sessions')
-      .deleteOne(filter)
-
-    if (result.deletedCount === 0) {
-      return NextResponse.json({ error: 'Failed to delete session' }, { status: 404 })
-    }
-
-    return NextResponse.json({ 
-      message: 'Session deleted successfully',
-      deletedId: id
-    })
+    return apiResponse(
+      {
+        deleted: {
+          session: sessionResult.deletedCount,
+          distractions: distractionsResult.deletedCount,
+        },
+      },
+      200,
+      "Session deleted successfully"
+    );
   } catch (error) {
-    console.error('Error deleting session:', error)
-    return NextResponse.json({ error: 'Failed to delete session' }, { status: 500 })
+    return handleApiError(error);
   }
+}
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+async function updateDailyStats(db: any, userId: string) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  await db.collection("dailyStats").updateOne(
+    { userId, date: today },
+    {
+      $inc: { sessionsCompleted: 1 },
+      $set: { updatedAt: new Date() },
+      $setOnInsert: {
+        createdAt: new Date(),
+        sessionsStarted: 0,
+        totalFocusTime: 0,
+        totalBreakTime: 0,
+        totalDistractions: 0,
+      },
+    },
+    { upsert: true }
+  );
 }

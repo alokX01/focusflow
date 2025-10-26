@@ -1,58 +1,96 @@
-"use client"
+"use client";
 
-import { Button } from "@/components/ui/button"
-import { Settings, BarChart3, History, Camera } from "lucide-react"
-import Link from "next/link"
-import { UserDropdown } from "@/components/user-dropdown"  // ✅ Import UserDropdown
-import { useSession } from "next-auth/react"
-import { DarkModeToggle } from "@/components/dark-mode-toggle"
+import { Button } from "@/components/ui/button";
+import { Settings, BarChart3, History, Camera, Menu } from "lucide-react";
+import Link from "next/link";
+import { useSession } from "next-auth/react";
+import { DarkModeToggle } from "@/components/dark-mode-toggle";
+import { UserDropdown } from "@/components/user-dropdown";
+import { useState } from "react";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 
 export function Header() {
-  const { data: session } = useSession()
+  const { data: session } = useSession();
+  const [isOpen, setIsOpen] = useState(false);
+
+  const navItems = [
+    { href: "/dashboard", icon: Camera, label: "Focus" },
+    { href: "/analytics", icon: BarChart3, label: "Analytics" },
+    { href: "/history", icon: History, label: "History" },
+    { href: "/settings", icon: Settings, label: "Settings" },
+  ];
 
   return (
     <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
       <div className="container mx-auto px-4 py-4">
         <div className="flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+          {/* Logo */}
+          <Link
+            href="/"
+            className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+          >
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center shadow-lg">
               <Camera className="w-4 h-4 text-primary-foreground" />
             </div>
-            <h1 className="text-xl font-semibold text-foreground">FocusFlow</h1>
+            <h1 className="text-xl font-semibold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+              FocusFlow
+            </h1>
           </Link>
 
-          <nav className="flex items-center gap-2 text-foreground">
-            {/* Only show nav items on desktop when logged in */}
+          {/* Desktop Navigation */}
+          <nav className="flex items-center gap-2">
             {session && (
-              <>
-                <div className="hidden md:flex items-center gap-2">
-                  <Button variant="ghost" size="sm" asChild>
-                    <Link href="/analytics">
-                      <BarChart3 className="w-4 h-4 mr-2" />
-                      Analytics
+              <div className="hidden md:flex items-center gap-1">
+                {navItems.map((item) => (
+                  <Button key={item.href} variant="ghost" size="sm" asChild>
+                    <Link href={item.href} className="gap-2">
+                      <item.icon className="w-4 h-4" />
+                      {item.label}
                     </Link>
                   </Button>
-                  <Button variant="ghost" size="sm" asChild>
-                    <Link href="/history">
-                      <History className="w-4 h-4 mr-2" />
-                      History
-                    </Link>
-                  </Button>
-                  <Button variant="ghost" size="sm" asChild>
-                    <Link href="/settings">
-                      <Settings className="w-4 h-4 mr-2" />
-                      Settings
-                    </Link>
-                  </Button>
-                </div>
-              </>
+                ))}
+              </div>
             )}
-            
+
             <DarkModeToggle />
-            <UserDropdown />  {/* ✅ Use UserDropdown, not UserMenu */}
+
+            {/* Mobile Menu - FIX: Don't use asChild with Button */}
+            {session && (
+              <div className="md:hidden">
+                <Sheet open={isOpen} onOpenChange={setIsOpen}>
+                  <SheetTrigger asChild>
+                    <Button variant="ghost" size="sm">
+                      <Menu className="h-5 w-5" />
+                    </Button>
+                  </SheetTrigger>
+                  <SheetContent side="right" className="w-64">
+                    <div className="flex flex-col gap-2 mt-8">
+                      {navItems.map((item) => (
+                        <Button
+                          key={item.href}
+                          variant="ghost"
+                          className="justify-start gap-2"
+                          asChild
+                        >
+                          <Link
+                            href={item.href}
+                            onClick={() => setIsOpen(false)}
+                          >
+                            <item.icon className="w-4 h-4" />
+                            {item.label}
+                          </Link>
+                        </Button>
+                      ))}
+                    </div>
+                  </SheetContent>
+                </Sheet>
+              </div>
+            )}
+
+            <UserDropdown />
           </nav>
         </div>
       </div>
     </header>
-  )
+  );
 }
