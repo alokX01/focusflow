@@ -261,7 +261,7 @@ async function calculateStreak(db: any, userId: string) {
     checkDate.setDate(checkDate.getDate() - i)
     checkDate.setHours(0, 0, 0, 0)
     
-    const hasSession = sessions.some(s => {
+    const hasSession = sessions.some((s: any) => {
       const sessionDate = new Date(s.createdAt)
       sessionDate.setHours(0, 0, 0, 0)
       return sessionDate.getTime() === checkDate.getTime()
