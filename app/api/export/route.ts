@@ -1,100 +1,128 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth/next'
-import { getDatabase } from '@/lib/mongodb'
-import { authOptions } from '@/lib/auth'
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import { getDatabase } from "@/lib/mongodb";
+import { authOptions } from "@/lib/auth";
+import { apiError } from "@/lib/api";
+
+export const dynamic = "force-dynamic";
+
+// ============================================
+// GET - Export User Data as CSV
+// ============================================
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
-    
+    const session = await getServerSession(authOptions);
+
     if (!session?.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return apiError("Unauthorized", 401);
     }
-    
-    const userId = (session.user as any).id || session.user.email
-    const { searchParams } = new URL(request.url)
-    const format = searchParams.get('format') || 'json' // json, csv
-    const dataType = searchParams.get('type') || 'all' // all, sessions, analytics
-    
-    const db = await getDatabase()
-    
-    // Gather all user data
-    const userData: any = {
-      profile: await db.collection('users').findOne({ email: session.user.email }),
-      settings: await db.collection('userSettings').findOne({ userId }),
-      sessions: await db.collection('sessions').find({ userId }).toArray(),
-      achievements: await db.collection('userAchievements').find({ userId }).toArray(),
-      dailyStats: await db.collection('dailyStats').find({ userId }).toArray()
+
+    const userId = (session.user as any).id || session.user.email;
+    const { searchParams } = new URL(request.url);
+    const period = searchParams.get("period") || "month";
+    const format = searchParams.get("format") || "csv";
+
+    const db = await getDatabase();
+
+    // Calculate date range
+    const endDate = new Date();
+    const startDate = new Date();
+
+    switch (period) {
+      case "week":
+        startDate.setDate(endDate.getDate() - 7);
+        break;
+      case "month":
+        startDate.setMonth(endDate.getMonth() - 1);
+        break;
+      case "year":
+        startDate.setFullYear(endDate.getFullYear() - 1);
+        break;
+      case "all":
+        startDate.setFullYear(2020);
+        break;
     }
-    
-    // Remove sensitive data
-    if (userData.profile) {
-      delete userData.profile.password
-      delete userData.profile._id
-    }
-    
-    if (format === 'csv' && dataType === 'sessions') {
-      // Convert sessions to CSV
-      const csv = convertSessionsToCSV(userData.sessions)
-      
-      return new NextResponse(csv, {
-        headers: {
-          'Content-Type': 'text/csv',
-          'Content-Disposition': `attachment; filename="focusflow-sessions-${Date.now()}.csv"`
-        }
+
+    // Fetch sessions
+    const sessions = await db
+      .collection("sessions")
+      .find({
+        userId,
+        createdAt: { $gte: startDate, $lte: endDate },
       })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    if (format === "json") {
+      return NextResponse.json(sessions, {
+        headers: {
+          "Content-Disposition": `attachment; filename="focusflow-export-${period}.json"`,
+          "Content-Type": "application/json",
+        },
+      });
     }
-    
-    // Return JSON
-    let exportData = userData
-    if (dataType === 'sessions') {
-      exportData = { sessions: userData.sessions }
-    } else if (dataType === 'analytics') {
-      exportData = { dailyStats: userData.dailyStats, achievements: userData.achievements }
-    }
-    
-    return NextResponse.json({
-      data: exportData,
-      exportedAt: new Date(),
-      user: session.user.email
-    })
+
+    // Generate CSV
+    const csv = generateCSV(sessions);
+
+    return new NextResponse(csv, {
+      headers: {
+        "Content-Disposition": `attachment; filename="focusflow-export-${period}.csv"`,
+        "Content-Type": "text/csv",
+      },
+    });
   } catch (error) {
-    console.error('Error exporting data:', error)
-    return NextResponse.json({ error: 'Failed to export data' }, { status: 500 })
+    console.error("Export error:", error);
+    return apiError("Failed to export data", 500);
   }
 }
 
-function convertSessionsToCSV(sessions: any[]) {
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+function generateCSV(sessions: any[]): string {
+  // CSV Headers
   const headers = [
-    'Date',
-    'Start Time',
-    'End Time',
-    'Duration (minutes)',
-    'Focus %',
-    'Distractions',
-    'Type',
-    'Completed',
-    'Goal',
-    'Tags'
-  ]
-  
-  const rows = sessions.map(s => [
-    new Date(s.createdAt).toLocaleDateString(),
-    new Date(s.startTime).toLocaleTimeString(),
-    s.endTime ? new Date(s.endTime).toLocaleTimeString() : 'N/A',
-    Math.round(s.duration / 60),
-    s.focusPercentage,
-    s.distractionCount,
-    s.sessionType,
-    s.isCompleted ? 'Yes' : 'No',
-    s.goal || '',
-    (s.tags || []).join(', ')
-  ])
-  
+    "Date",
+    "Start Time",
+    "End Time",
+    "Duration (min)",
+    "Focus Percentage",
+    "Distractions",
+    "Type",
+    "Completed",
+    "Goal",
+    "Tags",
+  ];
+
+  // CSV Rows
+  const rows = sessions.map((session) => {
+    const startTime = new Date(session.startTime);
+    const endTime = session.endTime ? new Date(session.endTime) : null;
+
+    return [
+      startTime.toLocaleDateString(),
+      startTime.toLocaleTimeString(),
+      endTime ? endTime.toLocaleTimeString() : "N/A",
+      Math.round(session.duration / 60),
+      session.focusPercentage,
+      session.distractionCount,
+      session.sessionType,
+      session.isCompleted ? "Yes" : "No",
+      session.goal || "",
+      Array.isArray(session.tags) ? session.tags.join("; ") : "",
+    ];
+  });
+
+  // Combine headers and rows
   const csvContent = [
-    headers.join(','),
-    ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-  ].join('\n')
-  
-  return csvContent
+    headers.join(","),
+    ...rows.map((row) =>
+      row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")
+    ),
+  ].join("\n");
+
+  return csvContent;
 }

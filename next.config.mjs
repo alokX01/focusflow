@@ -1,14 +1,38 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Remove dangerous flags - catch errors early!
   eslint: {
-    ignoreDuringBuilds: true,
+    dirs: ["app", "components", "lib", "hooks"], // Only check app code
   },
-  typescript: {
-    ignoreBuildErrors: true,
-  },
-  images: {
-    unoptimized: true,
-  },
-}
 
-export default nextConfig
+  // Optimize images
+  images: {
+    formats: ["image/avif", "image/webp"],
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "**.mongodb.com",
+      },
+    ],
+  },
+
+  // Optimize TensorFlow loading
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        net: false,
+        tls: false,
+      };
+    }
+    return config;
+  },
+
+  // Performance optimizations
+  experimental: {
+    optimizePackageImports: ["@radix-ui/react-*", "recharts", "lucide-react"],
+  },
+};
+
+export default nextConfig;

@@ -1,44 +1,50 @@
-"use client"
+"use client";
 
-import { useSession } from "next-auth/react"
-import { useRouter } from "next/navigation"
-import Link from "next/link"
-import { Button } from "@/components/ui/button"
-import { Header } from "@/components/header"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { 
-  ArrowRight, 
-  Brain, 
-  Target, 
-  TrendingUp, 
-  Shield, 
-  Users, 
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Header } from "@/components/header";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  ArrowRight,
+  Brain,
+  Target,
+  TrendingUp,
+  Shield,
+  Users,
   Zap,
   Play,
   CheckCircle,
   Star,
-  Activity
-} from "lucide-react"
-import { useEffect } from "react"
+  Activity,
+} from "lucide-react";
+import { useEffect } from "react";
 
 export default function HomePage() {
-  const { data: session, status } = useSession()
-  const router = useRouter()
+  const { data: session, status } = useSession();
+  const router = useRouter();
 
   useEffect(() => {
     // If user is logged in, redirect to dashboard
     if (status === "authenticated") {
-      router.push("/dashboard")
+      router.push("/dashboard");
     }
-  }, [status, router])
+  }, [status, router]);
 
   if (status === "loading") {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="animate-pulse">Loading...</div>
       </div>
-    )
+    );
   }
 
   return (
@@ -49,22 +55,21 @@ export default function HomePage() {
       <section className="relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-background to-background" />
         <div className="absolute inset-0 bg-grid-white/[0.02] bg-[size:50px_50px]" />
-        
+
         <div className="container mx-auto px-4 py-24 text-center relative">
           <Badge className="mb-4" variant="secondary">
             <Star className="h-3 w-3 mr-1" />
             Trusted by 10,000+ users
           </Badge>
-          
           <h1 className="text-5xl md:text-7xl font-bold bg-gradient-to-r from-primary via-primary/80 to-primary/60 bg-clip-text text-transparent mb-6 animate-fade-in">
             Master Your Focus
           </h1>
-          
-          <p className="text-xl md:text-2xl text-muted-foreground mb-8 max-w-3xl mx-auto animate-fade-in-delay">
-            Unlock peak productivity with AI-powered focus tracking, smart analytics, 
-            and personalized insights that help you work smarter, not harder.
-          </p>
 
+          <p className="text-xl md:text-2xl text-muted-foreground mb-8 max-w-3xl mx-auto animate-fade-in-delay">
+            Unlock peak productivity with AI-powered focus tracking, smart
+            analytics, and personalized insights that help you work smarter, not
+            harder.
+          </p>
           <div className="flex flex-col sm:flex-row justify-center gap-4 animate-fade-in-delay-2">
             <Link href="/auth/signup">
               <Button size="lg" className="gap-2 px-8">
@@ -80,7 +85,6 @@ export default function HomePage() {
               </Button>
             </Link>
           </div>
-
           <p className="text-sm text-muted-foreground mt-4">
             No credit card required • Free forever plan available
           </p>
@@ -93,15 +97,21 @@ export default function HomePage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
             <div>
               <div className="text-3xl font-bold text-primary">98%</div>
-              <div className="text-sm text-muted-foreground">Focus Improvement</div>
+              <div className="text-sm text-muted-foreground">
+                Focus Improvement
+              </div>
             </div>
             <div>
               <div className="text-3xl font-bold text-primary">2.5x</div>
-              <div className="text-sm text-muted-foreground">Productivity Boost</div>
+              <div className="text-sm text-muted-foreground">
+                Productivity Boost
+              </div>
             </div>
             <div>
               <div className="text-3xl font-bold text-primary">45min</div>
-              <div className="text-sm text-muted-foreground">Average Focus Time</div>
+              <div className="text-sm text-muted-foreground">
+                Average Focus Time
+              </div>
             </div>
             <div>
               <div className="text-3xl font-bold text-primary">10k+</div>
@@ -118,51 +128,52 @@ export default function HomePage() {
             Everything You Need to Stay Focused
           </h2>
           <p className="text-muted-foreground max-w-2xl mx-auto">
-            Powerful features designed to help you maintain deep focus and achieve your goals
+            Powerful features designed to help you maintain deep focus and
+            achieve your goals
           </p>
         </div>
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
           {[
-            { 
-              icon: Brain, 
-              title: "AI Focus Detection", 
+            {
+              icon: Brain,
+              title: "AI Focus Detection",
               desc: "Real-time camera tracking detects when you're distracted and helps you refocus",
-              badge: "Advanced AI"
+              badge: "Advanced AI",
             },
-            { 
-              icon: Target, 
-              title: "Smart Goals", 
+            {
+              icon: Target,
+              title: "Smart Goals",
               desc: "Set daily targets and track your progress with intelligent recommendations",
-              badge: "Personalized"
+              badge: "Personalized",
             },
-            { 
-              icon: TrendingUp, 
-              title: "Deep Analytics", 
+            {
+              icon: TrendingUp,
+              title: "Deep Analytics",
               desc: "Detailed insights into your focus patterns and productivity trends",
-              badge: "Data-Driven"
+              badge: "Data-Driven",
             },
-            { 
-              icon: Zap, 
-              title: "Pomodoro Pro", 
+            {
+              icon: Zap,
+              title: "Pomodoro Pro",
               desc: "Advanced timer with customizable intervals and automatic break reminders",
-              badge: "Proven Method"
+              badge: "Proven Method",
             },
-            { 
-              icon: Shield, 
-              title: "100% Private", 
+            {
+              icon: Shield,
+              title: "100% Private",
               desc: "All processing happens locally. Your data never leaves your device",
-              badge: "Secure"
+              badge: "Secure",
             },
-            { 
-              icon: Users, 
-              title: "Gamification", 
+            {
+              icon: Users,
+              title: "Gamification",
               desc: "Earn achievements, build streaks, and compete with friends",
-              badge: "Motivating"
+              badge: "Motivating",
             },
           ].map(({ icon: Icon, title, desc, badge }, i) => (
-            <Card 
-              key={i} 
+            <Card
+              key={i}
               className="group relative border-2 hover:border-primary/60 transition-all hover:shadow-xl"
             >
               <div className="absolute -top-3 right-4">
@@ -187,12 +198,24 @@ export default function HomePage() {
         <h2 className="text-3xl md:text-4xl font-bold text-center mb-12">
           Start Focusing in 3 Simple Steps
         </h2>
-        
+
         <div className="grid md:grid-cols-3 gap-8 max-w-4xl mx-auto">
           {[
-            { step: "1", title: "Sign Up", desc: "Create your free account in seconds" },
-            { step: "2", title: "Set Your Goals", desc: "Customize your focus sessions and targets" },
-            { step: "3", title: "Start Focusing", desc: "Begin tracking and improving your productivity" }
+            {
+              step: "1",
+              title: "Sign Up",
+              desc: "Create your free account in seconds",
+            },
+            {
+              step: "2",
+              title: "Set Your Goals",
+              desc: "Customize your focus sessions and targets",
+            },
+            {
+              step: "3",
+              title: "Start Focusing",
+              desc: "Begin tracking and improving your productivity",
+            },
           ].map(({ step, title, desc }) => (
             <div key={step} className="text-center">
               <div className="w-16 h-16 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-2xl font-bold mx-auto mb-4">
@@ -210,30 +233,33 @@ export default function HomePage() {
         <h2 className="text-3xl md:text-4xl font-bold text-center mb-12">
           Loved by Productive People
         </h2>
-        
+
         <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
           {[
-            { 
-              name: "Sarah Chen", 
-              role: "Software Engineer", 
-              text: "FocusFlow helped me increase my deep work sessions by 3x. The AI detection is incredibly accurate!" 
+            {
+              name: "Sarah Chen",
+              role: "Software Engineer",
+              text: "FocusFlow helped me increase my deep work sessions by 3x. The AI detection is incredibly accurate!",
             },
-            { 
-              name: "Michael Roberts", 
-              role: "Product Designer", 
-              text: "The analytics showed me exactly when I'm most productive. Game-changer for my workflow!" 
+            {
+              name: "Michael Roberts",
+              role: "Product Designer",
+              text: "The analytics showed me exactly when I'm most productive. Game-changer for my workflow!",
             },
-            { 
-              name: "Emma Wilson", 
-              role: "PhD Student", 
-              text: "Finally, a focus app that actually keeps me accountable. The streak feature is super motivating!" 
-            }
+            {
+              name: "Emma Wilson",
+              role: "PhD Student",
+              text: "Finally, a focus app that actually keeps me accountable. The streak feature is super motivating!",
+            },
           ].map(({ name, role, text }, i) => (
             <Card key={i} className="border-2">
               <CardContent className="pt-6">
                 <div className="flex mb-4">
                   {[...Array(5)].map((_, i) => (
-                    <Star key={i} className="h-4 w-4 fill-primary text-primary" />
+                    <Star
+                      key={i}
+                      className="h-4 w-4 fill-primary text-primary"
+                    />
                   ))}
                 </div>
                 <p className="text-sm mb-4 italic">"{text}"</p>
@@ -255,9 +281,10 @@ export default function HomePage() {
               Ready to 10x Your Productivity?
             </h2>
             <p className="text-muted-foreground mb-8 max-w-2xl mx-auto text-lg">
-              Join thousands of professionals who use FocusFlow to achieve deep focus and accomplish more every day.
+              Join thousands of professionals who use FocusFlow to achieve deep
+              focus and accomplish more every day.
             </p>
-            
+
             <div className="flex flex-col sm:flex-row gap-4 justify-center mb-6">
               <Link href="/auth/signup">
                 <Button size="lg" className="gap-2 px-8">
@@ -272,7 +299,7 @@ export default function HomePage() {
                 </Button>
               </Link>
             </div>
-            
+
             <div className="flex items-center justify-center gap-6 text-sm text-muted-foreground">
               <span className="flex items-center gap-1">
                 <CheckCircle className="h-4 w-4 text-green-500" />
@@ -299,14 +326,22 @@ export default function HomePage() {
               <Activity className="h-5 w-5 text-primary" />
               <span className="font-semibold">FocusFlow</span>
             </div>
-            
+
             <div className="flex gap-6 text-sm text-muted-foreground">
-              <Link href="/privacy" className="hover:text-foreground">Privacy</Link>
-              <Link href="/terms" className="hover:text-foreground">Terms</Link>
-              <Link href="/support" className="hover:text-foreground">Support</Link>
-              <Link href="/blog" className="hover:text-foreground">Blog</Link>
+              <Link href="/privacy" className="hover:text-foreground">
+                Privacy
+              </Link>
+              <Link href="/terms" className="hover:text-foreground">
+                Terms
+              </Link>
+              <Link href="/support" className="hover:text-foreground">
+                Support
+              </Link>
+              <Link href="/blog" className="hover:text-foreground">
+                Blog
+              </Link>
             </div>
-            
+
             <p className="text-sm text-muted-foreground">
               © 2024 FocusFlow. All rights reserved.
             </p>
@@ -314,5 +349,5 @@ export default function HomePage() {
         </div>
       </footer>
     </div>
-  )
+  );
 }

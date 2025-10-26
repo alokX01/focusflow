@@ -1,84 +1,149 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getDatabase } from '@/lib/mongodb'
-import { User } from '@/lib/models'
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import { getDatabase } from "@/lib/mongodb";
+import { authOptions } from "@/lib/auth";
+import { z } from "zod";
+import { apiResponse, apiError, handleApiError } from "@/lib/api";
 
-export const dynamic = 'force-dynamic'
+export const dynamic = "force-dynamic";
 
-// GET /api/users - Get user profile
+// ============================================
+// VALIDATION SCHEMA
+// ============================================
+
+const UpdateUserSchema = z.object({
+  name: z.string().min(2).max(100).optional(),
+  image: z.string().url().optional(),
+  // Add other updatable fields
+});
+
+// ============================================
+// GET - Get Current User
+// ============================================
+
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url)
-    const userId = searchParams.get('userId')
+    const session = await getServerSession(authOptions);
 
-    if (!userId) {
-      return NextResponse.json({ error: 'User ID is required' }, { status: 400 })
+    if (!session?.user) {
+      return apiError("Unauthorized", 401);
     }
 
-    const db = await getDatabase()
-    const user = await db
-      .collection<User>('users')
-      .findOne({ _id: userId })
+    const userId = (session.user as any).id || session.user.email;
+    const db = await getDatabase();
+
+    const user = await db.collection("users").findOne(
+      { email: session.user.email },
+      {
+        projection: {
+          hashedPassword: 0, // Don't send password hash
+        },
+      }
+    );
 
     if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+      return apiError("User not found", 404);
     }
 
-    return NextResponse.json({ user })
+    return apiResponse({
+      user: {
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        image: user.image,
+        emailVerified: user.emailVerified,
+        createdAt: user.createdAt,
+      },
+    });
   } catch (error) {
-    console.error('Error fetching user:', error)
-    return NextResponse.json({ error: 'Failed to fetch user' }, { status: 500 })
+    return handleApiError(error);
   }
 }
 
-// POST /api/users - Create or update user profile
-export async function POST(request: NextRequest) {
+// ============================================
+// PUT - Update Current User
+// ============================================
+
+export async function PUT(request: NextRequest) {
   try {
-    const body = await request.json()
-    const { userId, email, name, avatar } = body
+    const session = await getServerSession(authOptions);
 
-    if (!userId || !email || !name) {
-      return NextResponse.json(
-        { error: 'User ID, email, and name are required' },
-        { status: 400 }
-      )
+    if (!session?.user) {
+      return apiError("Unauthorized", 401);
     }
 
-    const db = await getDatabase()
-    
-    // Check if user already exists
-    const existingUser = await db
-      .collection<User>('users')
-      .findOne({ _id: userId })
+    const body = await request.json();
+    const validated = UpdateUserSchema.parse(body);
 
-    const userData: User = {
-      _id: userId,
-      email,
-      name,
-      avatar,
-      createdAt: existingUser?.createdAt || new Date(),
-      updatedAt: new Date()
+    const db = await getDatabase();
+
+    const result = await db.collection("users").findOneAndUpdate(
+      { email: session.user.email },
+      {
+        $set: {
+          ...validated,
+          updatedAt: new Date(),
+        },
+      },
+      {
+        returnDocument: "after",
+        projection: {
+          hashedPassword: 0,
+        },
+      }
+    );
+
+    if (!result) {
+      return apiError("Failed to update user", 500);
     }
 
-    let result
-    if (existingUser) {
-      result = await db
-        .collection<User>('users')
-        .updateOne(
-          { _id: userId },
-          { $set: userData }
-        )
-    } else {
-      result = await db
-        .collection<User>('users')
-        .insertOne(userData)
-    }
-
-    return NextResponse.json({ 
-      user: userData,
-      message: existingUser ? 'User updated successfully' : 'User created successfully'
-    })
+    return apiResponse(
+      {
+        user: {
+          id: result._id.toString(),
+          name: result.name,
+          email: result.email,
+          image: result.image,
+          emailVerified: result.emailVerified,
+        },
+      },
+      200,
+      "Profile updated successfully"
+    );
   } catch (error) {
-    console.error('Error saving user:', error)
-    return NextResponse.json({ error: 'Failed to save user' }, { status: 500 })
+    return handleApiError(error);
+  }
+}
+
+// ============================================
+// DELETE - Delete Current User Account
+// ============================================
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const session = await getServerSession(authOptions);
+
+    if (!session?.user) {
+      return apiError("Unauthorized", 401);
+    }
+
+    const userId = (session.user as any).id || session.user.email;
+    const db = await getDatabase();
+
+    // Delete user and all associated data
+    await Promise.all([
+      db.collection("users").deleteOne({ email: session.user.email }),
+      db.collection("sessions").deleteMany({ userId }),
+      db.collection("userSettings").deleteMany({ userId }),
+      db.collection("distractions").deleteMany({ userId }),
+      db.collection("dailyStats").deleteMany({ userId }),
+      db.collection("dailyAnalytics").deleteMany({ userId }),
+      db.collection("userAchievements").deleteMany({ userId }),
+      db.collection("activityLogs").deleteMany({ userId }),
+    ]);
+
+    return apiResponse(null, 200, "Account deleted successfully");
+  } catch (error) {
+    return handleApiError(error);
   }
 }
