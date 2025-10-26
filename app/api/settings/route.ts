@@ -1,104 +1,182 @@
-import { NextRequest, NextResponse } from "next/server"
-import { getServerSession } from "next-auth/next"
-import { authOptions } from "@/lib/auth"
-import { getDatabase } from "@/lib/mongodb"
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import { getDatabase } from "@/lib/mongodb";
+import { authOptions } from "@/lib/auth";
+import { z } from "zod";
+import { apiResponse, apiError, handleApiError } from "@/lib/api";
+
+export const dynamic = "force-dynamic";
+
+// ============================================
+// VALIDATION SCHEMA
+// ============================================
+
+const SettingsSchema = z.object({
+  // Timer
+  focusDuration: z.number().min(5).max(120).optional(),
+  shortBreakDuration: z.number().min(1).max(30).optional(),
+  longBreakDuration: z.number().min(5).max(60).optional(),
+  autoStartBreaks: z.boolean().optional(),
+  autoStartPomodoros: z.boolean().optional(),
+
+  // Focus Detection
+  cameraEnabled: z.boolean().optional(),
+  distractionThreshold: z.number().min(1).max(10).optional(),
+  pauseOnDistraction: z.boolean().optional(),
+
+  // Notifications
+  soundEnabled: z.boolean().optional(),
+  desktopNotifications: z.boolean().optional(),
+  breakReminders: z.boolean().optional(),
+  eyeStrainReminders: z.boolean().optional(),
+
+  // Privacy
+  dataRetention: z.number().min(7).max(365).optional(),
+  localProcessing: z.boolean().optional(),
+  analyticsSharing: z.boolean().optional(),
+
+  // Appearance
+  theme: z.enum(["light", "dark", "system"]).optional(),
+  reducedMotion: z.boolean().optional(),
+});
+
+// ============================================
+// GET - Fetch User Settings
+// ============================================
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
-    const db = await getDatabase()
-    
-    if (session?.user) {
-      const userId = (session.user as any).id || session.user.email
-      
-      // Get user settings
-      const settings = await db.collection("userSettings").findOne({ userId })
-      
-      if (settings) {
-        return NextResponse.json({ settings })
-      }
+    const session = await getServerSession(authOptions);
+
+    if (!session?.user) {
+      return apiError("Unauthorized", 401);
     }
-    
-    // Return default settings
-    const defaultSettings = {
-      focusDuration: 25,
-      breakDuration: 5,
-      longBreakDuration: 15,
-      sessionsBeforeLongBreak: 4,
-      dailyGoalMinutes: 240,
-      weeklyGoalHours: 20,
-      
-      // Features
-      cameraEnabled: false,
-      soundEnabled: true,
-      notificationsEnabled: true,
-      autoStartBreaks: false,
-      autoStartPomodoros: false,
-      
-      // Preferences
-      theme: "system",
-      clockFormat: "24h",
-      firstDayOfWeek: "monday",
-      
-      // Notifications
-      reminderEnabled: true,
-      reminderTime: "09:00",
-      breakReminders: true,
-      
-      // Privacy
-      shareAnalytics: false,
-      publicProfile: false
+
+    const userId = (session.user as any).id || session.user.email;
+    const db = await getDatabase();
+
+    const settings = await db.collection("userSettings").findOne({ userId });
+
+    if (!settings) {
+      return apiError("Settings not found", 404);
     }
-    
-    return NextResponse.json({ settings: defaultSettings })
+
+    // Remove MongoDB _id and metadata
+    const { _id, createdAt, updatedAt, ...userSettings } = settings;
+
+    return apiResponse({ settings: userSettings });
   } catch (error) {
-    console.error("Error fetching settings:", error)
-    return NextResponse.json({ error: "Failed to fetch settings" }, { status: 500 })
+    return handleApiError(error);
   }
 }
 
-export async function POST(request: NextRequest) {
+// ============================================
+// PUT - Update User Settings
+// ============================================
+
+export async function PUT(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
-    const body = await request.json()
-    
+    const session = await getServerSession(authOptions);
+
     if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      return apiError("Unauthorized", 401);
     }
-    
-    const userId = (session.user as any).id || session.user.email
-    const db = await getDatabase()
-    
-    // Update or create settings
-    await db.collection("userSettings").updateOne(
+
+    const userId = (session.user as any).id || session.user.email;
+    const body = await request.json();
+
+    // Validate input
+    const validated = SettingsSchema.parse(body);
+
+    const db = await getDatabase();
+
+    // Update settings
+    const result = await db.collection("userSettings").findOneAndUpdate(
       { userId },
       {
         $set: {
-          ...body,
-          userId,
-          updatedAt: new Date()
+          ...validated,
+          updatedAt: new Date(),
         },
         $setOnInsert: {
-          createdAt: new Date()
-        }
+          userId,
+          createdAt: new Date(),
+        },
       },
-      { upsert: true }
-    )
-    
-    // Log settings change
-    await db.collection("activityLogs").insertOne({
-      userId,
-      action: "settings_updated",
-      details: body,
-      timestamp: new Date()
-    })
-    
-    return NextResponse.json({ 
-      message: "Settings saved successfully",
-      settings: body 
-    })
+      {
+        upsert: true,
+        returnDocument: "after",
+      }
+    );
+
+    if (!result) {
+      return apiError("Failed to update settings", 500);
+    }
+
+    const { _id, createdAt, updatedAt, ...userSettings } = result;
+
+    return apiResponse(
+      { settings: userSettings },
+      200,
+      "Settings updated successfully"
+    );
   } catch (error) {
-    console.error("Error saving settings:", error)
-    return NextResponse.json({ error: "Failed to save settings" }, { status: 500 })
+    return handleApiError(error);
+  }
+}
+
+// ============================================
+// DELETE - Reset Settings to Default
+// ============================================
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const session = await getServerSession(authOptions);
+
+    if (!session?.user) {
+      return apiError("Unauthorized", 401);
+    }
+
+    const userId = (session.user as any).id || session.user.email;
+    const db = await getDatabase();
+
+    // Delete existing settings
+    await db.collection("userSettings").deleteOne({ userId });
+
+    // Create default settings
+    const defaultSettings = {
+      userId,
+      focusDuration: 25,
+      shortBreakDuration: 5,
+      longBreakDuration: 15,
+      autoStartBreaks: false,
+      autoStartPomodoros: false,
+      cameraEnabled: false,
+      distractionThreshold: 3,
+      pauseOnDistraction: true,
+      soundEnabled: true,
+      desktopNotifications: true,
+      breakReminders: true,
+      eyeStrainReminders: true,
+      dataRetention: 30,
+      localProcessing: true,
+      analyticsSharing: false,
+      theme: "system",
+      reducedMotion: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    await db.collection("userSettings").insertOne(defaultSettings);
+
+    const { _id, createdAt, updatedAt, ...userSettings } = defaultSettings;
+
+    return apiResponse(
+      { settings: userSettings },
+      200,
+      "Settings reset to defaults"
+    );
+  } catch (error) {
+    return handleApiError(error);
   }
 }

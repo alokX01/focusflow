@@ -1,157 +1,258 @@
-"use client"
+"use client";
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useSession } from "next-auth/react";
 
-type SessionState = {
-  id: string
-  targetDuration: number // seconds
-  cameraEnabled: boolean
+interface FocusSession {
+  _id?: string;
+  targetDuration: number;
+  sessionType: "focus" | "break" | "pomodoro";
+  cameraEnabled: boolean;
+  goal?: string;
+  tags?: string[];
+  startTime?: Date;
+  focusPercentage: number;
+  distractionCount: number;
+}
+
+interface Distraction {
+  type: string;
+  severity: number;
+  note?: string;
+  timestamp: Date;
 }
 
 export function useFocusSession() {
-  const [session, setSession] = useState<SessionState | null>(null)
-  const [isRunning, setIsRunning] = useState(false)
-  const [isPaused, setIsPaused] = useState(false)
-  const [timeRemaining, setTimeRemaining] = useState(0)
-  const [focusPercentage, setFocusPercentage] = useState(100)
-  const [distractionCount, setDistractionCount] = useState(0)
-  const [isLookingAtScreen, setIsLookingAtScreen] = useState(true)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const { data: authSession } = useSession();
+  const [session, setSession] = useState<FocusSession | null>(null);
+  const [isRunning, setIsRunning] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [timeRemaining, setTimeRemaining] = useState(0);
+  const [focusPercentage, setFocusPercentage] = useState(100);
+  const [distractionCount, setDistractionCount] = useState(0);
+  const [isLookingAtScreen, setIsLookingAtScreen] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const tickRef = useRef<NodeJS.Timeout | null>(null)
-  const autosaveRef = useRef<NodeJS.Timeout | null>(null)
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
 
-  // Start session
-  const startSession = useCallback(async (targetDurationMinutes: number, cameraEnabled: boolean) => {
-    setLoading(true)
-    setError(null)
+  // Timer countdown
+  useEffect(() => {
+    if (isRunning && !isPaused && timeRemaining > 0) {
+      intervalRef.current = setInterval(() => {
+        setTimeRemaining((prev) => Math.max(0, prev - 1));
+      }, 1000);
+    } else {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    }
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [isRunning, isPaused, timeRemaining]);
+
+  // Auto-stop when time reaches 0
+  useEffect(() => {
+    if (timeRemaining === 0 && isRunning && session) {
+      stopSession();
+    }
+  }, [timeRemaining, isRunning, session]);
+
+  const createSession = useCallback(async (data: Partial<FocusSession>) => {
+    setLoading(true);
+    setError(null);
+
     try {
-      const res = await fetch("/api/sessions", {
+      const response = await fetch("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          targetDuration: targetDurationMinutes,
+        body: JSON.stringify(data),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to create session");
+      }
+
+      const result = await response.json();
+      return result.session;
+    } catch (err: any) {
+      setError(err.message);
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const updateSession = useCallback(
+    async (sessionId: string, updates: Partial<FocusSession>) => {
+      try {
+        const response = await fetch(`/api/sessions/${sessionId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to update session");
+        }
+
+        return await response.json();
+      } catch (err: any) {
+        console.error("Update session error:", err);
+        return null;
+      }
+    },
+    []
+  );
+
+  const completeSession = useCallback(
+    async (sessionId: string, finalData: any) => {
+      try {
+        const response = await fetch(`/api/sessions/${sessionId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...finalData,
+            isCompleted: true,
+            endTime: new Date(),
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to complete session");
+        }
+
+        return await response.json();
+      } catch (err: any) {
+        console.error("Complete session error:", err);
+        return null;
+      }
+    },
+    []
+  );
+
+  const startSession = useCallback(
+    async (targetDuration: number, cameraEnabled: boolean = false) => {
+      console.log("🚀 START SESSION CALLED:", {
+        targetDuration,
+        cameraEnabled,
+      });
+      setLoading(true);
+      setError(null);
+
+      try {
+        console.log("📡 Creating session via API...");
+        const newSession = await createSession({
+          targetDuration,
           sessionType: "focus",
           cameraEnabled,
-        }),
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data?.error || "Failed to start session")
+          focusPercentage: 100,
+          distractionCount: 0,
+        });
+
+        console.log("✅ Session created:", newSession);
+
+        if (newSession) {
+          setSession(newSession);
+          setTimeRemaining(targetDuration * 60);
+          setFocusPercentage(100);
+          setDistractionCount(0);
+          setIsRunning(true);
+          setIsPaused(false);
+          sessionIdRef.current = newSession._id;
+          console.log("✅ Session state updated, ID:", newSession._id);
+        }
+      } catch (err: any) {
+        console.error("❌ Session creation failed:", err);
+        setError(err.message);
+      } finally {
+        setLoading(false);
       }
-      const data = await res.json()
-      const id = data.session._id as string
-      const targetSec = targetDurationMinutes * 60
+    },
+    [createSession]
+  );
 
-      setSession({ id, targetDuration: targetSec, cameraEnabled })
-      setTimeRemaining(targetSec)
-      setFocusPercentage(100)
-      setDistractionCount(0)
-      setIsPaused(false)
-      setIsRunning(true)
+  const pauseSession = useCallback(async () => {
+    setIsPaused(true);
 
-      // Start timers
-      tickRef.current = setInterval(() => {
-        setTimeRemaining(prev => Math.max(prev - 1, 0))
-      }, 1000)
+    if (sessionIdRef.current) {
+      await updateSession(sessionIdRef.current, {
+        focusPercentage,
+        distractionCount,
+      });
+    }
+  }, [focusPercentage, distractionCount, updateSession]);
 
-      autosaveRef.current = setInterval(async () => {
+  const resumeSession = useCallback(() => {
+    setIsPaused(false);
+  }, []);
+
+  const stopSession = useCallback(async () => {
+    setIsRunning(false);
+    setIsPaused(false);
+
+    if (sessionIdRef.current && session) {
+      const elapsedTime = session.targetDuration * 60 - timeRemaining;
+
+      await completeSession(sessionIdRef.current, {
+        duration: elapsedTime,
+        focusPercentage,
+        distractionCount,
+      });
+    }
+
+    // Reset state
+    setSession(null);
+    setTimeRemaining(0);
+    setFocusPercentage(100);
+    setDistractionCount(0);
+    sessionIdRef.current = null;
+  }, [
+    session,
+    timeRemaining,
+    focusPercentage,
+    distractionCount,
+    completeSession,
+  ]);
+
+  const addDistraction = useCallback(
+    async (type: string, severity: number, note?: string) => {
+      setDistractionCount((prev) => prev + 1);
+      setIsLookingAtScreen(false);
+
+      if (sessionIdRef.current) {
         try {
-          await fetch(`/api/sessions/${id}`, {
-            method: "PUT",
+          await fetch(`/api/sessions/${sessionIdRef.current}/distractions`, {
+            method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              duration: (targetSec - (timeRemaining - 1)), // approx
-              focusPercentage: Math.round(focusPercentage),
-              distractionCount,
-              isCompleted: false,
+              type,
+              severity,
+              note,
+              timestamp: new Date(),
             }),
-          })
-        } catch {}
-      }, 10000)
-    } catch (e: any) {
-      setError(e?.message || "Failed to start session")
-    } finally {
-      setLoading(false)
-    }
-  }, [distractionCount, focusPercentage, timeRemaining])
+          });
+        } catch (err) {
+          console.error("Failed to log distraction:", err);
+        }
+      }
 
-  // Pause / Resume
-  const pauseSession = useCallback(async () => {
-    if (!session) return
-    setIsPaused(true)
-    if (tickRef.current) clearInterval(tickRef.current)
-  }, [session])
+      // Auto-restore after 3 seconds
+      setTimeout(() => {
+        setIsLookingAtScreen(true);
+      }, 3000);
+    },
+    []
+  );
 
-  const resumeSession = useCallback(async () => {
-    if (!session) return
-    setIsPaused(false)
-    tickRef.current = setInterval(() => {
-      setTimeRemaining(prev => Math.max(prev - 1, 0))
-    }, 1000)
-  }, [session])
-
-  // Stop session
-  const stopSession = useCallback(async () => {
-    if (!session) return
-    setLoading(true)
-    try {
-      await fetch(`/api/sessions/${session.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          endTime: new Date(),
-          duration: session.targetDuration - timeRemaining,
-          focusPercentage: Math.round(focusPercentage),
-          distractionCount,
-          isCompleted: true,
-        }),
-      })
-    } catch (e) {
-      // swallow
-    } finally {
-      setIsRunning(false)
-      setIsPaused(false)
-      setSession(null)
-      setTimeRemaining(0)
-      if (tickRef.current) clearInterval(tickRef.current)
-      if (autosaveRef.current) clearInterval(autosaveRef.current)
-      setLoading(false)
-    }
-  }, [session, timeRemaining, focusPercentage, distractionCount])
-
-  // Add distraction
-  const addDistraction = useCallback(async (type: string, durationSec = 1, description?: string) => {
-    if (!session) return
-    setDistractionCount(prev => prev + 1)
-    try {
-      await fetch(`/api/sessions/${session.id}/distractions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type,
-          duration: durationSec,
-          description,
-        }),
-      })
-    } catch (e) {
-      // ignore
-    }
-  }, [session])
-
-  // Update focus
-  const updateFocusPercentage = useCallback((value: number) => {
-    setFocusPercentage(Math.max(0, Math.min(100, value)))
-  }, [])
-
-  // Cleanup
-  useEffect(() => {
-    return () => {
-      if (tickRef.current) clearInterval(tickRef.current)
-      if (autosaveRef.current) clearInterval(autosaveRef.current)
-    }
-  }, [])
+  const updateFocusPercentage = useCallback((newPercentage: number) => {
+    setFocusPercentage(Math.max(0, Math.min(100, newPercentage)));
+  }, []);
 
   return {
     session,
@@ -161,14 +262,16 @@ export function useFocusSession() {
     focusPercentage,
     distractionCount,
     isLookingAtScreen,
-    setIsLookingAtScreen, // expose setter so TimerInterface can update this based on camera
+    loading,
+    error,
     startSession,
     pauseSession,
     resumeSession,
     stopSession,
     addDistraction,
     updateFocusPercentage,
-    loading,
-    error,
-  }
+    createSession,
+    updateSession,
+    completeSession,
+  };
 }

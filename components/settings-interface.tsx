@@ -1,7 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import { Card } from "@/components/ui/card";
+import { useState, useEffect } from "react";
+import { motion } from "framer-motion";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
@@ -13,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Shield,
   Bell,
@@ -21,530 +29,487 @@ import {
   Timer,
   Save,
   RotateCcw,
+  Loader2,
 } from "lucide-react";
-
-interface SettingsState {
-  // Timer Settings
-  pomodoroLength: number;
-  shortBreakLength: number;
-  longBreakLength: number;
-  autoStartBreaks: boolean;
-  autoStartPomodoros: boolean;
-
-  // Focus Detection
-  distractionThreshold: number;
-  pauseOnDistraction: boolean;
-  gazeCalibration: boolean;
-  cameraEnabled: boolean;
-
-  // Notifications
-  soundEnabled: boolean;
-  desktopNotifications: boolean;
-  breakReminders: boolean;
-  eyeStrainReminders: boolean;
-
-  // Privacy
-  dataRetention: number;
-  localProcessing: boolean;
-  analyticsSharing: boolean;
-
-  // Appearance
-  theme: string;
-  reducedMotion: boolean;
-}
+import { useSettings } from "@/hooks/use-settings";
+import { toast } from "sonner";
 
 export function SettingsInterface() {
-  const [settings, setSettings] = useState<SettingsState>({
-    pomodoroLength: 25,
-    shortBreakLength: 5,
-    longBreakLength: 15,
-    autoStartBreaks: false,
-    autoStartPomodoros: false,
-    distractionThreshold: 3,
-    pauseOnDistraction: true,
-    gazeCalibration: false,
-    cameraEnabled: true,
-    soundEnabled: true,
-    desktopNotifications: true,
-    breakReminders: true,
-    eyeStrainReminders: true,
-    dataRetention: 30,
-    localProcessing: true,
-    analyticsSharing: false,
-    theme: "dark",
-    reducedMotion: false,
-  });
+  const { settings, isLoading, updateSettings, resetSettings } = useSettings();
+  const [isSaving, setIsSaving] = useState(false);
+  const [hasChanges, setHasChanges] = useState(false);
+  const [localSettings, setLocalSettings] = useState(settings);
 
-  const updateSetting = (key: keyof SettingsState, value: any) => {
-    setSettings((prev) => ({ ...prev, [key]: value }));
+  useEffect(() => {
+    if (settings) {
+      setLocalSettings(settings);
+    }
+  }, [settings]);
+
+  const handleChange = (key: string, value: any) => {
+    setLocalSettings((prev: any) => ({ ...prev, [key]: value }));
+    setHasChanges(true);
   };
 
-  const resetToDefaults = () => {
-    // Reset logic would go here
-    console.log("Resetting to defaults...");
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      await updateSettings(localSettings);
+      setHasChanges(false);
+      toast.success("Settings saved successfully!");
+    } catch (error) {
+      toast.error("Failed to save settings");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const saveSettings = () => {
-    // Save logic would go here
-    console.log("Saving settings...", settings);
+  const handleReset = async () => {
+    if (confirm("Are you sure you want to reset all settings to defaults?")) {
+      try {
+        await resetSettings();
+        setHasChanges(false);
+        toast.success("Settings reset to defaults");
+      } catch (error) {
+        toast.error("Failed to reset settings");
+      }
+    }
   };
+
+  if (isLoading) {
+    return <SettingsLoading />;
+  }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
-      {/* Timer Configuration */}
-      <Card className="p-6 bg-card/50 backdrop-blur-sm border-border">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Timer className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h3 className="text-lg font-semibold text-foreground">
-              Timer Settings
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Configure your Pomodoro timer preferences
-            </p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">
-              Pomodoro Length
-            </label>
-            <div className="space-y-2">
-              <Slider
-                value={[settings.pomodoroLength]}
-                onValueChange={(value) =>
-                  updateSetting("pomodoroLength", value[0])
-                }
-                max={60}
+    <div className="max-w-4xl mx-auto space-y-6">
+      {/* Timer Settings */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+      >
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                <Timer className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <CardTitle>Timer Settings</CardTitle>
+                <CardDescription>
+                  Configure your Pomodoro timer preferences
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <SliderSetting
+                label="Pomodoro Length"
+                value={localSettings.focusDuration || 25}
+                onChange={(v) => handleChange("focusDuration", v)}
                 min={15}
+                max={60}
                 step={5}
-                className="w-full"
+                unit="minutes"
               />
-              <div className="text-sm text-muted-foreground text-center">
-                {settings.pomodoroLength} minutes
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">
-              Short Break
-            </label>
-            <div className="space-y-2">
-              <Slider
-                value={[settings.shortBreakLength]}
-                onValueChange={(value) =>
-                  updateSetting("shortBreakLength", value[0])
-                }
-                max={15}
+              <SliderSetting
+                label="Short Break"
+                value={localSettings.shortBreakDuration || 5}
+                onChange={(v) => handleChange("shortBreakDuration", v)}
                 min={3}
+                max={15}
                 step={1}
-                className="w-full"
+                unit="minutes"
               />
-              <div className="text-sm text-muted-foreground text-center">
-                {settings.shortBreakLength} minutes
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">
-              Long Break
-            </label>
-            <div className="space-y-2">
-              <Slider
-                value={[settings.longBreakLength]}
-                onValueChange={(value) =>
-                  updateSetting("longBreakLength", value[0])
-                }
-                max={30}
+              <SliderSetting
+                label="Long Break"
+                value={localSettings.longBreakDuration || 15}
+                onChange={(v) => handleChange("longBreakDuration", v)}
                 min={10}
+                max={30}
                 step={5}
-                className="w-full"
+                unit="minutes"
               />
-              <div className="text-sm text-muted-foreground text-center">
-                {settings.longBreakLength} minutes
-              </div>
             </div>
-          </div>
-        </div>
 
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-sm font-medium text-foreground">
-                Auto-start breaks
-              </label>
-              <p className="text-xs text-muted-foreground">
-                Automatically start break timers
-              </p>
+            <div className="space-y-4">
+              <SwitchSetting
+                label="Auto-start breaks"
+                description="Automatically start break timers"
+                checked={localSettings.autoStartBreaks || false}
+                onChange={(v) => handleChange("autoStartBreaks", v)}
+              />
+              <SwitchSetting
+                label="Auto-start pomodoros"
+                description="Automatically start work sessions after breaks"
+                checked={localSettings.autoStartPomodoros || false}
+                onChange={(v) => handleChange("autoStartPomodoros", v)}
+              />
             </div>
-            <Switch
-              checked={settings.autoStartBreaks}
-              onCheckedChange={(checked) =>
-                updateSetting("autoStartBreaks", checked)
-              }
-            />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-sm font-medium text-foreground">
-                Auto-start pomodoros
-              </label>
-              <p className="text-xs text-muted-foreground">
-                Automatically start work sessions after breaks
-              </p>
-            </div>
-            <Switch
-              checked={settings.autoStartPomodoros}
-              onCheckedChange={(checked) =>
-                updateSetting("autoStartPomodoros", checked)
-              }
-            />
-          </div>
-        </div>
-      </Card>
+          </CardContent>
+        </Card>
+      </motion.div>
 
       {/* Focus Detection */}
-      <Card className="p-6 bg-card/50 backdrop-blur-sm border-border">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center">
-            <Eye className="w-5 h-5 text-green-500" />
-          </div>
-          <div>
-            <h3 className="text-lg font-semibold text-foreground">
-              Focus Detection
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Configure camera-based attention tracking
-            </p>
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-sm font-medium text-foreground">
-                Enable camera tracking
-              </label>
-              <p className="text-xs text-muted-foreground">
-                Use camera to monitor focus levels
-              </p>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1 }}
+      >
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center">
+                <Eye className="w-5 h-5 text-green-500" />
+              </div>
+              <div>
+                <CardTitle>Focus Detection</CardTitle>
+                <CardDescription>
+                  Configure camera-based attention tracking
+                </CardDescription>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Badge
-                variant={settings.cameraEnabled ? "default" : "secondary"}
-                className="text-xs"
-              >
-                {settings.cameraEnabled ? "Active" : "Disabled"}
-              </Badge>
-              <Switch
-                checked={settings.cameraEnabled}
-                onCheckedChange={(checked) =>
-                  updateSetting("cameraEnabled", checked)
-                }
-              />
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Enable camera tracking</p>
+                <p className="text-xs text-muted-foreground">
+                  Use camera to monitor focus levels
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge
+                  variant={
+                    localSettings.cameraEnabled ? "default" : "secondary"
+                  }
+                >
+                  {localSettings.cameraEnabled ? "Active" : "Disabled"}
+                </Badge>
+                <Switch
+                  checked={localSettings.cameraEnabled || false}
+                  onCheckedChange={(v) => handleChange("cameraEnabled", v)}
+                />
+              </div>
             </div>
-          </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">
-              Distraction threshold
-            </label>
-            <p className="text-xs text-muted-foreground mb-2">
-              How long you can look away before being marked as distracted
-            </p>
-            <Slider
-              value={[settings.distractionThreshold]}
-              onValueChange={(value) =>
-                updateSetting("distractionThreshold", value[0])
-              }
-              max={10}
+            <SliderSetting
+              label="Distraction threshold"
+              description="How long you can look away before being marked as distracted"
+              value={localSettings.distractionThreshold || 3}
+              onChange={(v) => handleChange("distractionThreshold", v)}
               min={1}
+              max={10}
               step={1}
-              className="w-full"
+              unit="seconds"
             />
-            <div className="text-sm text-muted-foreground text-center">
-              {settings.distractionThreshold} seconds
-            </div>
-          </div>
 
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-sm font-medium text-foreground">
-                Pause timer on distraction
-              </label>
-              <p className="text-xs text-muted-foreground">
-                Automatically pause when you look away
-              </p>
-            </div>
-            <Switch
-              checked={settings.pauseOnDistraction}
-              onCheckedChange={(checked) =>
-                updateSetting("pauseOnDistraction", checked)
-              }
+            <SwitchSetting
+              label="Pause timer on distraction"
+              description="Automatically pause when you look away"
+              checked={localSettings.pauseOnDistraction || false}
+              onChange={(v) => handleChange("pauseOnDistraction", v)}
             />
-          </div>
 
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-sm font-medium text-foreground">
-                Gaze calibration
-              </label>
-              <p className="text-xs text-muted-foreground">
-                Improve accuracy with personalized calibration
-              </p>
+            <div className="flex items-center justify-between pt-4 border-t border-border">
+              <div>
+                <p className="text-sm font-medium">Gaze calibration</p>
+                <p className="text-xs text-muted-foreground">
+                  Improve accuracy with personalized calibration
+                </p>
+              </div>
+              <Button variant="outline" size="sm">
+                Calibrate Now
+              </Button>
             </div>
-            <Button variant="outline" size="sm">
-              Calibrate Now
-            </Button>
-          </div>
-        </div>
-      </Card>
+          </CardContent>
+        </Card>
+      </motion.div>
 
-      {/* Notifications & Sounds */}
-      <Card className="p-6 bg-card/50 backdrop-blur-sm border-border">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
-            <Bell className="w-5 h-5 text-amber-500" />
-          </div>
-          <div>
-            <h3 className="text-lg font-semibold text-foreground">
-              Notifications & Sounds
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Manage alerts and audio feedback
-            </p>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-sm font-medium text-foreground">
-                Sound notifications
-              </label>
-              <p className="text-xs text-muted-foreground">
-                Play sounds for timer events
-              </p>
+      {/* Notifications */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.2 }}
+      >
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
+                <Bell className="w-5 h-5 text-amber-500" />
+              </div>
+              <div>
+                <CardTitle>Notifications & Sounds</CardTitle>
+                <CardDescription>
+                  Manage alerts and audio feedback
+                </CardDescription>
+              </div>
             </div>
-            <Switch
-              checked={settings.soundEnabled}
-              onCheckedChange={(checked) =>
-                updateSetting("soundEnabled", checked)
-              }
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <SwitchSetting
+              label="Sound notifications"
+              description="Play sounds for timer events"
+              checked={localSettings.soundEnabled || false}
+              onChange={(v) => handleChange("soundEnabled", v)}
             />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-sm font-medium text-foreground">
-                Desktop notifications
-              </label>
-              <p className="text-xs text-muted-foreground">
-                Show system notifications
-              </p>
-            </div>
-            <Switch
-              checked={settings.desktopNotifications}
-              onCheckedChange={(checked) =>
-                updateSetting("desktopNotifications", checked)
-              }
+            <SwitchSetting
+              label="Desktop notifications"
+              description="Show system notifications"
+              checked={localSettings.desktopNotifications || false}
+              onChange={(v) => handleChange("desktopNotifications", v)}
             />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-sm font-medium text-foreground">
-                Break reminders
-              </label>
-              <p className="text-xs text-muted-foreground">
-                Remind you to take breaks
-              </p>
-            </div>
-            <Switch
-              checked={settings.breakReminders}
-              onCheckedChange={(checked) =>
-                updateSetting("breakReminders", checked)
-              }
+            <SwitchSetting
+              label="Break reminders"
+              description="Remind you to take breaks"
+              checked={localSettings.breakReminders || false}
+              onChange={(v) => handleChange("breakReminders", v)}
             />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-sm font-medium text-foreground">
-                Eye strain reminders
-              </label>
-              <p className="text-xs text-muted-foreground">
-                Suggest eye rest during long sessions
-              </p>
-            </div>
-            <Switch
-              checked={settings.eyeStrainReminders}
-              onCheckedChange={(checked) =>
-                updateSetting("eyeStrainReminders", checked)
-              }
+            <SwitchSetting
+              label="Eye strain reminders"
+              description="Suggest eye rest during long sessions"
+              checked={localSettings.eyeStrainReminders || false}
+              onChange={(v) => handleChange("eyeStrainReminders", v)}
             />
-          </div>
-        </div>
-      </Card>
+          </CardContent>
+        </Card>
+      </motion.div>
 
-      {/* Privacy & Data */}
-      <Card className="p-6 bg-card/50 backdrop-blur-sm border-border">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
-            <Shield className="w-5 h-5 text-blue-500" />
-          </div>
-          <div>
-            <h3 className="text-lg font-semibold text-foreground">
-              Privacy & Data
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Control your data and privacy settings
-            </p>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-sm font-medium text-foreground">
-                Local processing only
-              </label>
-              <p className="text-xs text-muted-foreground">
-                All camera analysis happens on your device
-              </p>
+      {/* Privacy */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3 }}
+      >
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                <Shield className="w-5 h-5 text-blue-500" />
+              </div>
+              <div>
+                <CardTitle>Privacy & Data</CardTitle>
+                <CardDescription>
+                  Control your data and privacy settings
+                </CardDescription>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Badge variant="default" className="text-xs bg-green-500">
-                Enabled
-              </Badge>
-              <Switch
-                checked={settings.localProcessing}
-                onCheckedChange={(checked) =>
-                  updateSetting("localProcessing", checked)
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Local processing only</p>
+                <p className="text-xs text-muted-foreground">
+                  All camera analysis happens on your device
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="default" className="bg-green-500">
+                  Enabled
+                </Badge>
+                <Switch checked disabled />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Data retention</label>
+              <p className="text-xs text-muted-foreground mb-2">
+                How long to keep your session data
+              </p>
+              <Select
+                value={localSettings.dataRetention?.toString() || "30"}
+                onValueChange={(v) =>
+                  handleChange("dataRetention", parseInt(v))
                 }
-              />
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="7">7 days</SelectItem>
+                  <SelectItem value="30">30 days</SelectItem>
+                  <SelectItem value="90">90 days</SelectItem>
+                  <SelectItem value="365">1 year</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-          </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">
-              Data retention
-            </label>
-            <p className="text-xs text-muted-foreground mb-2">
-              How long to keep your session data
-            </p>
-            <Select
-              value={settings.dataRetention.toString()}
-              onValueChange={(value) =>
-                updateSetting("dataRetention", Number.parseInt(value))
-              }
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="7">7 days</SelectItem>
-                <SelectItem value="30">30 days</SelectItem>
-                <SelectItem value="90">90 days</SelectItem>
-                <SelectItem value="365">1 year</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-sm font-medium text-foreground">
-                Anonymous analytics
-              </label>
-              <p className="text-xs text-muted-foreground">
-                Help improve FocusFlow with usage data
-              </p>
-            </div>
-            <Switch
-              checked={settings.analyticsSharing}
-              onCheckedChange={(checked) =>
-                updateSetting("analyticsSharing", checked)
-              }
+            <SwitchSetting
+              label="Anonymous analytics"
+              description="Help improve FocusFlow with usage data"
+              checked={localSettings.analyticsSharing || false}
+              onChange={(v) => handleChange("analyticsSharing", v)}
             />
-          </div>
-        </div>
-      </Card>
+          </CardContent>
+        </Card>
+      </motion.div>
 
       {/* Appearance */}
-      <Card className="p-6 bg-card/50 backdrop-blur-sm border-border">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-lg bg-purple-500/10 flex items-center justify-center">
-            <Palette className="w-5 h-5 text-purple-500" />
-          </div>
-          <div>
-            <h3 className="text-lg font-semibold text-foreground">
-              Appearance
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Customize the look and feel
-            </p>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Theme</label>
-            <Select
-              value={settings.theme}
-              onValueChange={(value) => updateSetting("theme", value)}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="light">Light</SelectItem>
-                <SelectItem value="dark">Dark</SelectItem>
-                <SelectItem value="system">System</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-sm font-medium text-foreground">
-                Reduced motion
-              </label>
-              <p className="text-xs text-muted-foreground">
-                Minimize animations and transitions
-              </p>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.4 }}
+      >
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-purple-500/10 flex items-center justify-center">
+                <Palette className="w-5 h-5 text-purple-500" />
+              </div>
+              <div>
+                <CardTitle>Appearance</CardTitle>
+                <CardDescription>Customize the look and feel</CardDescription>
+              </div>
             </div>
-            <Switch
-              checked={settings.reducedMotion}
-              onCheckedChange={(checked) =>
-                updateSetting("reducedMotion", checked)
-              }
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Theme</label>
+              <Select
+                value={localSettings.theme || "system"}
+                onValueChange={(v) => handleChange("theme", v)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="light">Light</SelectItem>
+                  <SelectItem value="dark">Dark</SelectItem>
+                  <SelectItem value="system">System</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <SwitchSetting
+              label="Reduced motion"
+              description="Minimize animations and transitions"
+              checked={localSettings.reducedMotion || false}
+              onChange={(v) => handleChange("reducedMotion", v)}
             />
-          </div>
-        </div>
-      </Card>
+          </CardContent>
+        </Card>
+      </motion.div>
 
       {/* Action Buttons */}
-      <div className="flex items-center justify-between pt-6 border-t border-border">
-        <Button
-          variant="outline"
-          onClick={resetToDefaults}
-          className="gap-2 bg-transparent text-foreground"
-        >
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.5 }}
+        className="flex items-center justify-between pt-6 border-t border-border sticky bottom-0 bg-background py-4"
+      >
+        <Button variant="outline" onClick={handleReset} className="gap-2">
           <RotateCcw className="w-4 h-4" />
           Reset to Defaults
         </Button>
 
-        <Button onClick={saveSettings} className="gap-2">
-          <Save className="w-4 h-4" />
-          Save Settings
+        <Button
+          onClick={handleSave}
+          disabled={!hasChanges || isSaving}
+          className="gap-2"
+        >
+          {isSaving ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Saving...
+            </>
+          ) : (
+            <>
+              <Save className="w-4 h-4" />
+              Save Settings
+            </>
+          )}
         </Button>
+      </motion.div>
+    </div>
+  );
+}
+
+// Helper Components
+function SliderSetting({
+  label,
+  description,
+  value,
+  onChange,
+  min,
+  max,
+  step,
+  unit,
+}: {
+  label: string;
+  description?: string;
+  value: number;
+  onChange: (value: number) => void;
+  min: number;
+  max: number;
+  step: number;
+  unit: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <label className="text-sm font-medium">{label}</label>
+      {description && (
+        <p className="text-xs text-muted-foreground">{description}</p>
+      )}
+      <div className="space-y-2">
+        <Slider
+          value={[value]}
+          onValueChange={(v) => onChange(v[0])}
+          min={min}
+          max={max}
+          step={step}
+          className="w-full"
+        />
+        <div className="text-sm text-center text-muted-foreground">
+          {value} {unit}
+        </div>
       </div>
+    </div>
+  );
+}
+
+function SwitchSetting({
+  label,
+  description,
+  checked,
+  onChange,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between">
+      <div>
+        <p className="text-sm font-medium">{label}</p>
+        <p className="text-xs text-muted-foreground">{description}</p>
+      </div>
+      <Switch checked={checked} onCheckedChange={onChange} />
+    </div>
+  );
+}
+
+function SettingsLoading() {
+  return (
+    <div className="max-w-4xl mx-auto space-y-6">
+      {[1, 2, 3, 4, 5].map((i) => (
+        <Card key={i}>
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <Skeleton className="h-10 w-10 rounded-lg" />
+              <div className="space-y-2">
+                <Skeleton className="h-5 w-32" />
+                <Skeleton className="h-4 w-48" />
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {[1, 2, 3].map((j) => (
+              <Skeleton key={j} className="h-12 w-full" />
+            ))}
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
 }
