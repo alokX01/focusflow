@@ -1,23 +1,49 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Play,
   Pause,
   Square,
   Eye,
   EyeOff,
-  Camera,
   AlertTriangle,
-  Activity,
+  Coffee,
+  Target,
+  Clock,
+  Sparkles,
+  History,
+  Brain,
+  TrendingUp,
+  Lightbulb,
+  Award,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useSettingsContext } from "@/contexts/settings-context";
 
 import {
   requestCameraAccess,
@@ -26,58 +52,203 @@ import {
   stopFaceFocus,
   subscribeFaceFocus,
   cleanupFaceDetection,
-  getFaceDetectionRuntime,
+  setFaceFocusOptions,
   type FaceFocusSnapshot,
 } from "@/lib/face-detection";
 
+type SessionType = "focus" | "shortBreak" | "longBreak";
 type PauseReason = null | "manual" | "auto";
+
+interface TaskModalData {
+  task: string;
+  sessionType: SessionType;
+}
+
+// Simple sounds
+const playSound = (type: "start" | "pause" | "complete", enabled: boolean) => {
+  if (!enabled) return;
+  const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  const tones: Record<string, number> = {
+    start: 523,
+    pause: 392,
+    complete: 784,
+  };
+  gain.gain.setValueAtTime(0.08, ctx.currentTime);
+  osc.frequency.setValueAtTime(tones[type] ?? 440, ctx.currentTime);
+  osc.start();
+  osc.stop(ctx.currentTime + 0.15);
+};
+
+const showNotification = (title: string, body: string, enabled: boolean) => {
+  if (!enabled) return;
+  if ("Notification" in window && Notification.permission === "granted") {
+    new Notification(title, { body });
+  }
+};
+
+const waitForVideoReady = (v: HTMLVideoElement) =>
+  new Promise<void>((resolve) => {
+    if (v.readyState >= 2 && v.videoWidth > 0) return resolve();
+    const onReady = () => {
+      v.removeEventListener("loadedmetadata", onReady);
+      v.removeEventListener("canplay", onReady);
+      resolve();
+    };
+    v.addEventListener("loadedmetadata", onReady);
+    v.addEventListener("canplay", onReady);
+  });
+
+// Fallback AI insight generator (unchanged)
+const generateAIInsight = (sessionData: {
+  focusPercentage: number;
+  distractionCount: number;
+  duration: number;
+  wasCompleted: boolean;
+}) => {
+  const { focusPercentage, distractionCount, wasCompleted } = sessionData;
+  if (!wasCompleted) {
+    return {
+      summary: "Session ended early",
+      insights: [
+        "You stopped the session before completion. Try shorter sessions to build momentum.",
+        "Clear distractors before starting.",
+      ],
+      tips: ["2-minute rule", "Remove distractions"],
+      score: Math.round(focusPercentage),
+      badge: "In Progress",
+    };
+  }
+  if (focusPercentage >= 90) {
+    return {
+      summary: "Outstanding performance! 🌟",
+      insights: [
+        `Exceptional focus at ${Math.round(focusPercentage)}%.`,
+        `${distractionCount} distractions — great control.`,
+      ],
+      tips: ["Document what worked", "Repeat same setup/time"],
+      score: Math.round(focusPercentage),
+      badge: "Elite Focus",
+    };
+  }
+  if (focusPercentage >= 75) {
+    return {
+      summary: "Great session! 🎯",
+      insights: [
+        `Strong focus at ${Math.round(focusPercentage)}%.`,
+        `${distractionCount} distractions — slightly above ideal.`,
+      ],
+      tips: ["Use DND", "Phone out of room", "Try website blockers"],
+      score: Math.round(focusPercentage),
+      badge: "Strong Focus",
+    };
+  }
+  if (focusPercentage >= 60) {
+    return {
+      summary: "Good effort, room to improve 💪",
+      insights: [
+        `Moderate focus at ${Math.round(focusPercentage)}%.`,
+        "Environment likely needs optimization.",
+      ],
+      tips: [
+        "Shorter sessions",
+        "Walk before starting",
+        "Noise or brown noise",
+      ],
+      score: Math.round(focusPercentage),
+      badge: "Building Focus",
+    };
+  }
+  return {
+    summary: "Challenging session 🔧",
+    insights: [
+      `Focus at ${Math.round(
+        focusPercentage
+      )}% suggests significant distractions.`,
+      "Try a different time of day or reduce stimuli.",
+    ],
+    tips: ["Audit workspace", "Body-doubling", "10-min blocks"],
+    score: Math.round(focusPercentage),
+    badge: "Work in Progress",
+  };
+};
 
 export function TimerInterface({
   onSessionComplete,
 }: {
   onSessionComplete?: () => void;
 }) {
-  // Timer
-  const [timeLeft, setTimeLeft] = useState(25 * 60);
-  const [targetDuration] = useState(25 * 60);
+  const { settings } = useSettingsContext();
+
+  // Session state
+  const [sessionType, setSessionType] = useState<SessionType>("focus");
+  const [timeLeft, setTimeLeft] = useState(settings.focusDuration * 60);
+  const [targetDuration, setTargetDuration] = useState(
+    settings.focusDuration * 60
+  );
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [pauseReason, setPauseReason] = useState<PauseReason>(null);
 
-  // Session
+  // Tracking
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [focusPercentage, setFocusPercentage] = useState(100);
   const [distractionCount, setDistractionCount] = useState(0);
   const [focusedTimeSec, setFocusedTimeSec] = useState(0);
+  const [currentTask, setCurrentTask] = useState("");
 
-  // Detection + UI metrics
+  const [pomodoroCount, setPomodoroCount] = useState(0);
+
+  // Modals
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalTask, setModalTask] = useState("");
+  const [modalSessionType, setModalSessionType] =
+    useState<SessionType>("focus");
+  const [recentTasks, setRecentTasks] = useState<string[]>([]);
+
+  const [isAIModalOpen, setIsAIModalOpen] = useState(false);
+  const [aiInsight, setAiInsight] = useState<any>(null);
+  const [isGeneratingInsight, setIsGeneratingInsight] = useState(false);
+
+  // Detection
   const [cameraReady, setCameraReady] = useState(false);
   const [faceDetected, setFaceDetected] = useState(false);
   const [isLookingAtScreen, setIsLookingAtScreen] = useState(false);
   const [confidence, setConfidence] = useState(0);
-  const [fps, setFps] = useState(0);
-  const [runtime, setRuntime] = useState<"mediapipe" | "tfjs" | "unknown">(
-    "unknown"
-  );
-  const [resolution, setResolution] = useState("0×0");
-  const [lastDistractionAt, setLastDistractionAt] = useState<string | null>(
-    null
-  );
-
-  // UI toggles
-  const [autoPauseOnDistraction, setAutoPauseOnDistraction] = useState(true);
-  const [showPreview, setShowPreview] = useState(true);
-  const [showOverlay, setShowOverlay] = useState(true);
 
   // Refs
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const hiddenVideoRef = useRef<HTMLVideoElement>(null);
+  const visibleVideoRef = useRef<HTMLVideoElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const unsubRef = useRef<null | (() => void)>(null);
+  const unsubRef = useRef<(() => void) | null>(null);
   const lastFrameTsRef = useRef<number>(performance.now());
   const lastDistractionRef = useRef<number>(0);
+  const lastConfidenceUpdateRef = useRef<number>(0);
+  const distractionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
   const initInProgressRef = useRef(false);
+
+  // Load recent tasks
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("recentTasks");
+      if (stored) setRecentTasks(JSON.parse(stored));
+    } catch {}
+  }, []);
+
+  // Notifications permission
+  useEffect(() => {
+    if (settings.desktopNotifications && "Notification" in window) {
+      if (Notification.permission === "default")
+        Notification.requestPermission();
+    }
+  }, [settings.desktopNotifications]);
 
   // Timer tick
   useEffect(() => {
@@ -98,146 +269,347 @@ export function TimerInterface({
         timerIntervalRef.current = null;
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRunning, isPaused]);
 
-  // Subscribe to face focus snapshots
-  const subscribeSnapshots = () => {
+  // Attach stream to visible preview when toggled ON
+  useEffect(() => {
+    if (
+      settings.previewEnabled &&
+      streamRef.current &&
+      visibleVideoRef.current
+    ) {
+      try {
+        (visibleVideoRef.current as any).srcObject = streamRef.current;
+      } catch {
+        visibleVideoRef.current!.src = URL.createObjectURL(
+          streamRef.current as any
+        );
+      }
+      visibleVideoRef.current!.play().catch(() => {});
+    }
+  }, [settings.previewEnabled]);
+
+  // Keep detector options updated
+  useEffect(() => {
+    try {
+      setFaceFocusOptions({
+        mirrored: settings.mirrorVideo,
+        includeKeypoints: settings.overlayEnabled,
+      });
+    } catch {}
+  }, [settings.mirrorVideo, settings.overlayEnabled]);
+
+  // Draw overlay
+  const drawOverlay = useCallback(
+    (snap: FaceFocusSnapshot) => {
+      if (!settings.previewEnabled || !settings.overlayEnabled) return;
+      const videoEl = visibleVideoRef.current;
+      const canvas = overlayRef.current;
+      if (!videoEl || !canvas) return;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      const w = videoEl.clientWidth;
+      const h = videoEl.clientHeight;
+      if (!w || !h) return;
+
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      ctx.clearRect(0, 0, w, h);
+
+      if (!snap.keypoints || !snap.faceDetected) return;
+
+      const sx = w / snap.sourceW;
+      const sy = h / snap.sourceH;
+
+      ctx.fillStyle = snap.isLookingAtScreen
+        ? "rgba(34,197,94,0.9)"
+        : "rgba(239,68,68,0.9)";
+      for (const kp of snap.keypoints) {
+        // preview is mirrored with CSS when mirrorVideo=true, so we don't flip x here — we also mirror canvas with CSS
+        const x = kp.x * sx;
+        const y = kp.y * sy;
+        ctx.beginPath();
+        ctx.arc(x, y, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    },
+    [settings.previewEnabled, settings.overlayEnabled]
+  );
+
+  // Subscribe to snapshots
+  const subscribeSnapshots = useCallback(() => {
     if (unsubRef.current) unsubRef.current();
     unsubRef.current = subscribeFaceFocus((snap: FaceFocusSnapshot) => {
-      // Update metrics
-      setRuntime(snap.runtime);
-      if (snap.fps) setFps(snap.fps);
       setFaceDetected(snap.faceDetected);
       setIsLookingAtScreen(snap.isLookingAtScreen);
-      setConfidence(snap.confidence);
-      setResolution(`${snap.sourceW}×${snap.sourceH}`);
+      drawOverlay(snap);
 
-      // Draw overlay if requested (video is mirrored; overlay is mirrored via CSS)
-      if (showOverlay) {
-        drawOverlay(snap);
-      }
-
-      // Focus score and focused time only while not paused
-      const now = snap.ts;
-      const dt = Math.max(0, (now - lastFrameTsRef.current) / 1000);
+      const now = typeof snap.ts === "number" ? snap.ts : performance.now();
+      let dt = Math.max(0, (now - lastFrameTsRef.current) / 1000);
+      dt = Math.min(dt, 0.5); // clamp spikes
       lastFrameTsRef.current = now;
 
-      const focusedNow = snap.faceDetected && snap.isLookingAtScreen;
+      if (now - lastConfidenceUpdateRef.current > 1000) {
+        setConfidence(snap.confidence);
+        lastConfidenceUpdateRef.current = now;
+      }
 
-      if (!isPaused) {
+      const meetsConf = (snap.confidence || 0) >= settings.minFocusConfidence;
+      const focusedNow =
+        snap.faceDetected && snap.isLookingAtScreen && meetsConf;
+
+      if (!isPaused && sessionType === "focus") {
         setFocusPercentage((prev) => {
-          const delta = focusedNow ? +1 * dt : -4 * dt;
+          const gain = settings.focusGainPerSec;
+          const loss = snap.faceDetected
+            ? settings.defocusLossPerSec
+            : settings.noFaceLossPerSec;
+          const delta = focusedNow ? gain * dt : -loss * dt;
           return Math.max(0, Math.min(100, prev + delta));
         });
         if (focusedNow) setFocusedTimeSec((prev) => prev + dt);
       }
 
-      // Distraction handling (throttled)
-      if (!focusedNow) {
+      // Distraction detection (throttle)
+      if (!focusedNow && sessionType === "focus") {
         const t = Date.now();
-        if (t - lastDistractionRef.current > 3000) {
+        if (t - lastDistractionRef.current > 5000) {
           lastDistractionRef.current = t;
           setDistractionCount((prev) => prev + 1);
-          setLastDistractionAt(new Date().toLocaleTimeString());
-          toast.warning("Distraction detected", { duration: 900 });
-          // Auto pause/resume
-          if (autoPauseOnDistraction && isRunning && !isPaused) {
+          toast.warning("👀 Distraction detected", { duration: 2000 });
+        }
+
+        // Auto-pause
+        if (
+          settings.pauseOnDistraction &&
+          isRunning &&
+          !isPaused &&
+          !distractionTimerRef.current
+        ) {
+          distractionTimerRef.current = setTimeout(() => {
             setIsPaused(true);
             setPauseReason("auto");
-            toast.message("Auto paused");
-          }
+            playSound("pause", settings.soundEnabled);
+            toast.message("⏸️ Auto-paused due to distraction");
+            distractionTimerRef.current = null;
+          }, settings.distractionThreshold * 1000);
         }
-      } else if (autoPauseOnDistraction && isPaused && pauseReason === "auto") {
-        setIsPaused(false);
-        setPauseReason(null);
-        toast.message("Auto resumed");
+      } else {
+        // Clear timer
+        if (distractionTimerRef.current) {
+          clearTimeout(distractionTimerRef.current);
+          distractionTimerRef.current = null;
+        }
+        // Auto-resume
+        if (settings.pauseOnDistraction && isPaused && pauseReason === "auto") {
+          setIsPaused(false);
+          setPauseReason(null);
+          toast.message("▶️ Auto-resumed");
+        }
       }
     });
-  };
+  }, [
+    drawOverlay,
+    isPaused,
+    isRunning,
+    pauseReason,
+    sessionType,
+    settings.minFocusConfidence,
+    settings.focusGainPerSec,
+    settings.defocusLossPerSec,
+    settings.noFaceLossPerSec,
+    settings.pauseOnDistraction,
+    settings.distractionThreshold,
+    settings.soundEnabled,
+  ]);
 
-  const drawOverlay = (snap: FaceFocusSnapshot) => {
-    const video = videoRef.current;
-    const canvas = overlayRef.current;
-    if (!video || !canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    // match overlay to displayed size
-    const w = video.clientWidth;
-    const h = video.clientHeight;
-    if (!w || !h) return;
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
+  // Init camera
+  const initializeCamera = useCallback(async () => {
+    if (!settings.cameraEnabled) {
+      toast.info("Camera tracking is disabled in settings");
+      return false;
     }
-    ctx.clearRect(0, 0, w, h);
+    if (initInProgressRef.current) return false;
+    initInProgressRef.current = true;
 
-    if (!snap.keypoints || !snap.faceDetected) return;
-
-    const sx = w / snap.sourceW;
-    const sy = h / snap.sourceH;
-
-    ctx.fillStyle = "rgba(99,102,241,0.9)";
-    for (const kp of snap.keypoints) {
-      const x = kp.x * sx;
-      const y = kp.y * sy;
-      ctx.beginPath();
-      ctx.arc(x, y, 2, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  };
-
-  // Start session
-  const handleStart = async () => {
-    setIsRunning(true);
-    setIsPaused(false);
-    setPauseReason(null);
-    setTimeLeft(targetDuration);
-    setFocusPercentage(100);
-    setDistractionCount(0);
-    setFocusedTimeSec(0);
-    setLastDistractionAt(null);
-
-    // Camera
     try {
-      if (!initInProgressRef.current) {
-        initInProgressRef.current = true;
-        const stream = await requestCameraAccess();
-        streamRef.current = stream;
-        const v = videoRef.current!;
-        v.srcObject = stream;
-        v.muted = true;
-        v.playsInline = true;
-        await v.play();
-        setCameraReady(true);
-        await ensureFaceFocus(v);
-        startFaceFocus({ includeKeypoints: true });
-        subscribeSnapshots();
-        setRuntime(getFaceDetectionRuntime());
-        toast.success("Camera & detector ready");
+      const stream = await requestCameraAccess();
+      streamRef.current = stream;
+
+      // Hidden video for detector
+      const hv = hiddenVideoRef.current;
+      if (!hv) throw new Error("Hidden video not mounted");
+      try {
+        (hv as any).srcObject = stream;
+      } catch {
+        hv.src = URL.createObjectURL(stream as any);
       }
+      hv.muted = true;
+      hv.playsInline = true;
+      await waitForVideoReady(hv);
+      await hv.play();
+
+      // Visible preview (optional)
+      const vv = visibleVideoRef.current;
+      if (vv && settings.previewEnabled) {
+        try {
+          (vv as any).srcObject = stream;
+        } catch {
+          vv.src = URL.createObjectURL(stream as any);
+        }
+        vv.muted = true;
+        vv.playsInline = true;
+        await vv.play().catch(() => {});
+      }
+
+      await ensureFaceFocus(hv);
+      startFaceFocus({
+        includeKeypoints: settings.overlayEnabled,
+        mirrored: settings.mirrorVideo,
+      });
+      subscribeSnapshots();
+
+      setCameraReady(true);
+      toast.success("📹 Camera & detector ready");
+      return true;
     } catch (e: any) {
       console.error(e);
-      toast.error(e?.message || "Camera init failed");
+      toast.error(e?.message || "Failed to initialize camera");
       setCameraReady(false);
+      return false;
     } finally {
       initInProgressRef.current = false;
     }
+  }, [
+    settings.cameraEnabled,
+    settings.previewEnabled,
+    settings.overlayEnabled,
+    settings.mirrorVideo,
+    subscribeSnapshots,
+  ]);
 
-    // Create session
+  // AI insights
+  const fetchAIInsights = useCallback(
+    async (sessionData: {
+      focusPercentage: number;
+      distractionCount: number;
+      duration: number;
+      wasCompleted: boolean;
+    }) => {
+      setIsGeneratingInsight(true);
+      if (sessionId) {
+        try {
+          const resp = await fetch(`/api/sessions/${sessionId}/insight`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(sessionData),
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.insight) {
+              setAiInsight({
+                summary: "AI Analysis",
+                insights: [data.insight],
+                tips: [],
+                score: Math.round(sessionData.focusPercentage),
+                badge: "AI Powered",
+              });
+              setIsGeneratingInsight(false);
+              return;
+            }
+          }
+        } catch (e) {
+          console.error("Insight fetch failed:", e);
+        }
+      }
+      setAiInsight(generateAIInsight(sessionData));
+      setIsGeneratingInsight(false);
+    },
+    [sessionId]
+  );
+
+  const handleShowInsights = () => {
+    fetchAIInsights({
+      focusPercentage,
+      distractionCount,
+      duration: targetDuration - timeLeft,
+      wasCompleted: timeLeft === 0,
+    });
+    setIsAIModalOpen(true);
+  };
+
+  // Start session (with modal)
+  const handleStartClick = () => {
+    setModalTask("");
+    setModalSessionType("focus");
+    setIsModalOpen(true);
+  };
+
+  const handleStartSession = async (data: TaskModalData) => {
+    setIsModalOpen(false);
+    setSessionType(data.sessionType);
+    setCurrentTask(data.task || "");
+
+    let duration = settings.focusDuration * 60;
+    if (data.sessionType === "shortBreak")
+      duration = settings.shortBreakDuration * 60;
+    if (data.sessionType === "longBreak")
+      duration = settings.longBreakDuration * 60;
+
+    setTargetDuration(duration);
+    setTimeLeft(duration);
+    setIsRunning(true);
+    setIsPaused(false);
+    setPauseReason(null);
+    setFocusPercentage(100);
+    setDistractionCount(0);
+    setFocusedTimeSec(0);
+
+    // Save recent task
+    if (data.task && data.task.trim()) {
+      try {
+        const updated = [
+          data.task,
+          ...recentTasks.filter((t) => t !== data.task),
+        ].slice(0, 5);
+        setRecentTasks(updated);
+        localStorage.setItem("recentTasks", JSON.stringify(updated));
+      } catch {}
+    }
+
+    // Camera
+    if (data.sessionType === "focus" && settings.cameraEnabled) {
+      await initializeCamera();
+    }
+
+    playSound("start", settings.soundEnabled);
+    showNotification(
+      "Session Started",
+      `${data.sessionType === "focus" ? "Focus" : "Break"} — ${
+        data.task || "No task"
+      }`,
+      settings.desktopNotifications
+    );
+
+    // Create session in backend
     try {
       const res = await fetch("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          targetDuration: targetDuration / 60,
-          sessionType: "focus",
-          cameraEnabled: true,
+          targetDuration: duration / 60,
+          sessionType: data.sessionType === "focus" ? "focus" : "break",
+          cameraEnabled: settings.cameraEnabled && data.sessionType === "focus",
+          task: data.task || undefined,
         }),
       });
       if (!res.ok) throw new Error("Failed to create session");
-      const data = await res.json();
-      setSessionId(data.session._id);
+      const result = await res.json();
+      setSessionId(result.session._id);
     } catch (err) {
       console.error("❌ Session creation failed:", err);
       toast.error("Failed to start session");
@@ -247,28 +619,36 @@ export function TimerInterface({
   const handlePause = () => {
     setIsPaused(true);
     setPauseReason("manual");
-    toast.info("Session paused");
+    playSound("pause", settings.soundEnabled);
+    toast.info("⏸️ Session paused");
+    if (distractionTimerRef.current) {
+      clearTimeout(distractionTimerRef.current);
+      distractionTimerRef.current = null;
+    }
   };
 
   const handleResume = () => {
     setIsPaused(false);
     setPauseReason(null);
-    toast.info("Session resumed");
+    playSound("start", settings.soundEnabled);
+    toast.info("▶️ Session resumed");
   };
 
   const handleStop = async () => {
+    const wasCompleted = timeLeft === 0;
+
     setIsRunning(false);
     setIsPaused(false);
     setPauseReason(null);
 
-    // stop detection
+    // Stop detection
     stopFaceFocus();
     if (unsubRef.current) {
       unsubRef.current();
       unsubRef.current = null;
     }
 
-    // stop camera
+    // Stop camera
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -276,7 +656,12 @@ export function TimerInterface({
     setCameraReady(false);
     await cleanupFaceDetection();
 
-    // save session
+    if (distractionTimerRef.current) {
+      clearTimeout(distractionTimerRef.current);
+      distractionTimerRef.current = null;
+    }
+
+    // Persist session
     if (sessionId) {
       try {
         await fetch(`/api/sessions/${sessionId}`, {
@@ -287,7 +672,7 @@ export function TimerInterface({
             focusedTime: Math.round(focusedTimeSec),
             focusPercentage,
             distractionCount,
-            isCompleted: timeLeft === 0,
+            isCompleted: wasCompleted,
             endTime: new Date().toISOString(),
           }),
         });
@@ -296,22 +681,59 @@ export function TimerInterface({
       }
     }
 
-    // reset UI
-    setTimeLeft(targetDuration);
-    setFocusPercentage(100);
-    setDistractionCount(0);
-    setFocusedTimeSec(0);
+    // Post-session insights
+    if (wasCompleted && sessionType === "focus") {
+      fetchAIInsights({
+        focusPercentage,
+        distractionCount,
+        duration: targetDuration - timeLeft,
+        wasCompleted: true,
+      });
+      setIsAIModalOpen(true);
+    }
+
     setSessionId(null);
 
-    toast.success("Session ended");
+    // Pomodoro auto cycle
+    if (wasCompleted && sessionType === "focus") {
+      const newCount = pomodoroCount + 1;
+      setPomodoroCount(newCount);
+      if (settings.autoStartBreaks) {
+        setTimeout(() => {
+          if (newCount % 4 === 0) {
+            handleStartSession({
+              task: "Long Break",
+              sessionType: "longBreak",
+            });
+          } else {
+            handleStartSession({
+              task: "Short Break",
+              sessionType: "shortBreak",
+            });
+          }
+        }, 3000);
+      }
+    } else if (wasCompleted && sessionType !== "focus") {
+      if (settings.autoStartPomodoros) {
+        setTimeout(() => handleStartClick(), 3000);
+      }
+    }
+
+    toast.success(wasCompleted ? "✅ Session completed!" : "Session ended");
   };
 
   const handleSessionComplete = () => {
+    playSound("complete", settings.soundEnabled);
+    showNotification(
+      "Session Complete! 🎉",
+      `You completed a ${sessionType} session!`,
+      settings.desktopNotifications
+    );
     handleStop();
     onSessionComplete?.();
   };
 
-  // Cleanup on unmount (including Fast Refresh)
+  // Cleanup
   useEffect(() => {
     return () => {
       try {
@@ -323,6 +745,10 @@ export function TimerInterface({
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
+      }
+      if (distractionTimerRef.current) {
+        clearTimeout(distractionTimerRef.current);
+        distractionTimerRef.current = null;
       }
       cleanupFaceDetection().catch(() => {});
       if (timerIntervalRef.current) {
@@ -340,178 +766,234 @@ export function TimerInterface({
       .toString()
       .padStart(2, "0")}`;
   };
+
   const progress = ((targetDuration - timeLeft) / targetDuration) * 100;
+
+  const getSessionStyle = () => {
+    switch (sessionType) {
+      case "focus":
+        return {
+          color: "text-primary",
+          bg: "bg-primary/10",
+          border: "border-primary/50",
+          icon: Target,
+          label: "Focus Session",
+        };
+      case "shortBreak":
+        return {
+          color: "text-green-500",
+          bg: "bg-green-500/10",
+          border: "border-green-500/50",
+          icon: Coffee,
+          label: "Short Break",
+        };
+      case "longBreak":
+        return {
+          color: "text-blue-500",
+          bg: "bg-blue-500/10",
+          border: "border-blue-500/50",
+          icon: Coffee,
+          label: "Long Break",
+        };
+    }
+  };
+  const sessionStyle = getSessionStyle()!;
+  const SessionIcon = sessionStyle.icon;
 
   return (
     <>
-      {/* Top bar */}
-      <div className="max-w-5xl mx-auto">
-        <div className="flex items-center justify-between gap-2 pb-3">
-          <div className="flex items-center gap-2">
-            <Button
-              variant={autoPauseOnDistraction ? "default" : "outline"}
-              size="sm"
-              onClick={() => setAutoPauseOnDistraction((s) => !s)}
-            >
-              {autoPauseOnDistraction ? "Auto Pause: ON" : "Auto Pause: OFF"}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowPreview((s) => !s)}
-            >
-              {showPreview ? "Hide Preview" : "Show Preview"}
-            </Button>
-            <Button
-              variant={showOverlay ? "default" : "outline"}
-              size="sm"
-              onClick={() => setShowOverlay((s) => !s)}
-            >
-              {showOverlay ? "Overlay: ON" : "Overlay: OFF"}
-            </Button>
-          </div>
-          <div className="text-sm text-muted-foreground flex items-center gap-2">
-            <Badge variant="secondary">runtime: {runtime}</Badge>
-            <Badge variant="secondary">
-              fps: <Activity className="w-3 h-3 mr-1" />
-              {fps}
-            </Badge>
-            <Badge variant="secondary">src: {resolution}</Badge>
-          </div>
-        </div>
-
-        {/* Preview (mirrored) */}
-        <div
-          className={cn("relative mx-auto", showPreview ? "block" : "hidden")}
-          style={{ maxWidth: 720 }}
-        >
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-full rounded-md border "
-          />
-          {showOverlay && (
-            <canvas
-              ref={overlayRef}
-              className="absolute top-0 left-0 w-full h-full pointer-events-none rounded-md transform -scale-x-100"
-            />
-          )}
-        </div>
+      {/* Hidden video for detector */}
+      <div className="sr-only pointer-events-none absolute -z-50">
+        <video ref={hiddenVideoRef} autoPlay playsInline muted />
       </div>
 
-      <div className="max-w-5xl mx-auto space-y-6 mt-4">
-        {/* Status card */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
-          <Card
-            className={cn(
-              "transition-colors",
-              isRunning &&
-                !isLookingAtScreen &&
-                "border-destructive/50 bg-destructive/5"
-            )}
-          >
-            <CardContent className="p-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
-                <div className="flex items-center gap-3">
-                  <div
+      <div className="max-w-5xl mx-auto space-y-6">
+        {/* Camera Preview */}
+        {/* <AnimatePresence mode="wait">
+          {isRunning &&
+            sessionType === "focus" &&
+            settings.cameraEnabled &&
+            cameraReady &&
+            settings.previewEnabled && (
+              <motion.div
+                key="camera-preview"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="relative mx-auto rounded-lg overflow-hidden border"
+                style={{ maxWidth: 640 }}
+              >
+                <video
+                  ref={visibleVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={cn(
+                    "w-full",
+                    settings.mirrorVideo && "transform -scale-x-100"
+                  )}
+                />
+                {settings.overlayEnabled && (
+                  <canvas
+                    ref={overlayRef}
                     className={cn(
-                      "w-3 h-3 rounded-full transition-colors",
-                      cameraReady
-                        ? isLookingAtScreen && faceDetected
-                          ? "bg-green-500 animate-pulse"
-                          : "bg-red-500 animate-pulse"
-                        : "bg-gray-400"
+                      "absolute top-0 left-0 w-full h-full pointer-events-none",
+                      settings.mirrorVideo && "transform -scale-x-100"
                     )}
                   />
-                  <span className="text-sm font-medium">Camera Status:</span>
+                )}
+
+                <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
                   <Badge
                     variant={
-                      cameraReady
-                        ? isLookingAtScreen && faceDetected
-                          ? "default"
-                          : "destructive"
-                        : "secondary"
+                      faceDetected && isLookingAtScreen
+                        ? "default"
+                        : "destructive"
                     }
-                    className="gap-1"
+                    className="gap-1.5"
                   >
-                    {cameraReady ? (
-                      faceDetected ? (
-                        isLookingAtScreen ? (
-                          <>
-                            <Eye className="w-3 h-3" /> Focused
-                          </>
-                        ) : (
-                          <>
-                            <EyeOff className="w-3 h-3" /> Looking Away
-                          </>
-                        )
+                    {faceDetected ? (
+                      isLookingAtScreen ? (
+                        <>
+                          <Eye className="w-3 h-3" /> Focused
+                        </>
                       ) : (
                         <>
-                          <AlertTriangle className="w-3 h-3" /> No Face
+                          <EyeOff className="w-3 h-3" /> Looking Away
                         </>
                       )
                     ) : (
                       <>
-                        <Camera className="w-3 h-3 animate-spin" />
-                        Initializing...
+                        <AlertTriangle className="w-3 h-3" /> No Face
                       </>
                     )}
                   </Badge>
+                  <Badge variant="secondary">
+                    {Math.round(confidence)}% confidence
+                  </Badge>
                 </div>
+              </motion.div>
+            )}
+        </AnimatePresence> */}
 
-                <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                  <span>
-                    confidence:{" "}
-                    <span className="font-medium">
-                      {Math.round(confidence)}%
-                    </span>
-                  </span>
-                  <span>
-                    distractions:{" "}
-                    <span className="font-medium">{distractionCount}</span>
-                  </span>
-                  <span>
-                    last:{" "}
-                    <span className="font-medium">
-                      {lastDistractionAt || "—"}
-                    </span>
-                  </span>
-                  {isPaused && (
-                    <Badge variant="destructive">
-                      paused {pauseReason === "auto" ? "(auto)" : "(manual)"}
-                    </Badge>
-                  )}
+        {/* Status Card */}
+        {isRunning && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
+            <Card className={cn("transition-colors", sessionStyle.border)}>
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={cn(
+                        "w-10 h-10 rounded-full flex items-center justify-center",
+                        sessionStyle.bg
+                      )}
+                    >
+                      <SessionIcon
+                        className={cn("w-5 h-5", sessionStyle.color)}
+                      />
+                    </div>
+                    <div>
+                      <p className="font-medium">{sessionStyle.label}</p>
+                      {currentTask && (
+                        <p className="text-sm text-muted-foreground">
+                          {currentTask}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    {sessionType === "focus" && (
+                      <div className="flex items-center gap-4 text-sm">
+                        <div className="flex items-center gap-1.5">
+                          <Sparkles className="w-4 h-4 text-primary" />
+                          <span className="font-medium">
+                            {Math.round(focusPercentage)}%
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <AlertTriangle className="w-4 h-4 text-amber-500" />
+                          <span className="font-medium">
+                            {distractionCount}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Clock className="w-4 h-4 text-green-500" />
+                          <span className="font-medium">
+                            {formatTime(focusedTimeSec)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {sessionType === "focus" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleShowInsights}
+                        className="gap-2"
+                      >
+                        <Brain className="w-4 h-4" /> AI Insights
+                      </Button>
+                    )}
+
+                    {isPaused && (
+                      <Badge variant="destructive">
+                        Paused {pauseReason === "auto" && "(Auto)"}
+                      </Badge>
+                    )}
+                  </div>
                 </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
 
-                <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                  <span>
-                    focus score:{" "}
-                    <span className="text-primary font-medium">
-                      {Math.round(focusPercentage)}%
-                    </span>
-                  </span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
-
-        {/* Timer */}
+        {/* Timer Display */}
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           className="text-center space-y-8"
         >
+          {/* Pomodoro Progress */}
+          {pomodoroCount > 0 && (
+            <div className="flex items-center justify-center gap-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div
+                  key={i}
+                  className={cn(
+                    "w-3 h-3 rounded-full transition-colors",
+                    i < pomodoroCount % 4
+                      ? "bg-primary"
+                      : "bg-muted-foreground/20"
+                  )}
+                />
+              ))}
+              <span className="ml-2 text-sm text-muted-foreground">
+                {pomodoroCount} completed
+              </span>
+            </div>
+          )}
+
+          {/* Timer circle */}
           <div className="relative inline-block">
-            <div className="w-80 h-80 mx-auto rounded-full border-8 border-border bg-card/30 backdrop-blur-sm flex items-center justify-center shadow-2xl">
+            <div
+              className={cn(
+                "w-80 h-80 mx-auto rounded-full border-8 flex items-center justify-center shadow-2xl transition-colors",
+                sessionStyle.bg,
+                sessionStyle.border
+              )}
+            >
               <div className="text-center">
                 <motion.div
-                  className="text-7xl font-mono font-bold"
+                  className={cn(
+                    "text-7xl font-mono font-bold",
+                    sessionStyle.color
+                  )}
                   animate={{ scale: isRunning && !isPaused ? [1, 1.02, 1] : 1 }}
                   transition={{
                     duration: 2,
@@ -521,12 +1003,15 @@ export function TimerInterface({
                   {formatTime(timeLeft)}
                 </motion.div>
                 <div className="text-sm text-muted-foreground uppercase tracking-wider mt-2">
-                  {isRunning ? (isPaused ? "Paused" : "Focus Time") : "Ready"}
+                  {isRunning
+                    ? isPaused
+                      ? "Paused"
+                      : sessionStyle.label
+                    : "Ready"}
                 </div>
               </div>
             </div>
 
-            {/* Progress ring */}
             <svg
               className="absolute inset-0 w-80 h-80 mx-auto -rotate-90 pointer-events-none"
               viewBox="0 0 100 100"
@@ -547,7 +1032,10 @@ export function TimerInterface({
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2"
-                className="text-primary transition-all duration-1000"
+                className={cn(
+                  sessionStyle.color,
+                  "transition-all duration-1000"
+                )}
                 strokeDasharray="282.7"
                 strokeDashoffset={282.7 - (282.7 * progress) / 100}
                 strokeLinecap="round"
@@ -558,9 +1046,12 @@ export function TimerInterface({
           {/* Controls */}
           <div className="flex items-center justify-center gap-3">
             {!isRunning ? (
-              <Button onClick={handleStart} size="lg" className="gap-2 px-8">
-                <Play className="w-5 h-5" />
-                Start Focus Session
+              <Button
+                onClick={handleStartClick}
+                size="lg"
+                className="gap-2 px-8"
+              >
+                <Play className="w-5 h-5" /> Start Session
               </Button>
             ) : (
               <>
@@ -572,13 +1063,11 @@ export function TimerInterface({
                 >
                   {isPaused ? (
                     <>
-                      <Play className="w-5 h-5" />
-                      Resume
+                      <Play className="w-5 h-5" /> Resume
                     </>
                   ) : (
                     <>
-                      <Pause className="w-5 h-5" />
-                      Pause
+                      <Pause className="w-5 h-5" /> Pause
                     </>
                   )}
                 </Button>
@@ -588,16 +1077,15 @@ export function TimerInterface({
                   size="lg"
                   className="gap-2"
                 >
-                  <Square className="w-5 h-5" />
-                  Stop
+                  <Square className="w-5 h-5" /> End Session
                 </Button>
               </>
             )}
           </div>
         </motion.div>
 
-        {/* Stats */}
-        {isRunning && (
+        {/* Stats Grid */}
+        {isRunning && sessionType === "focus" && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -606,23 +1094,225 @@ export function TimerInterface({
             <StatCard
               label="Focus Score"
               value={`${Math.round(focusPercentage)}%`}
-              color="text-green-500"
+              icon={Sparkles}
+              color="text-primary"
               showProgress
               progressValue={focusPercentage}
             />
             <StatCard
               label="Distractions"
               value={distractionCount}
+              icon={AlertTriangle}
               color="text-amber-500"
             />
             <StatCard
-              label="Time Focused"
+              label="Focused Time"
               value={formatTime(focusedTimeSec)}
-              color="text-primary"
+              icon={Clock}
+              color="text-green-500"
             />
           </motion.div>
         )}
       </div>
+
+      {/* Start Session Modal */}
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Target className="w-5 h-5" /> Start New Session
+            </DialogTitle>
+            <DialogDescription>
+              Choose your session type and optionally add a task
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Session Type</Label>
+              <Select
+                value={modalSessionType}
+                onValueChange={(v) => setModalSessionType(v as SessionType)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="focus">
+                    <div className="flex items-center gap-2">
+                      <Target className="w-4 h-4" /> Focus (
+                      {settings.focusDuration} min)
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="shortBreak">
+                    <div className="flex items-center gap-2">
+                      <Coffee className="w-4 h-4" /> Short Break (
+                      {settings.shortBreakDuration} min)
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="longBreak">
+                    <div className="flex items-center gap-2">
+                      <Coffee className="w-4 h-4" /> Long Break (
+                      {settings.longBreakDuration} min)
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="task">What are you working on?</Label>
+              <Input
+                id="task"
+                value={modalTask}
+                onChange={(e) => setModalTask(e.target.value)}
+                placeholder="e.g., Complete project report"
+                className="w-full"
+              />
+            </div>
+
+            {recentTasks.length > 0 && (
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                  <History className="w-3 h-3" /> Recent Tasks
+                </Label>
+                <div className="flex flex-wrap gap-2">
+                  {recentTasks.map((task, i) => (
+                    <Badge
+                      key={i}
+                      variant="outline"
+                      className="cursor-pointer hover:bg-accent"
+                      onClick={() => setModalTask(task)}
+                    >
+                      {task}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {modalSessionType === "focus" && !settings.cameraEnabled && (
+              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm text-amber-600 dark:text-amber-400">
+                    Camera tracking is disabled in settings
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() =>
+                handleStartSession({
+                  task: modalTask.trim(),
+                  sessionType: modalSessionType,
+                })
+              }
+            >
+              <Play className="w-4 h-4 mr-2" /> Start Session
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* AI Insights Modal */}
+      <Dialog open={isAIModalOpen} onOpenChange={setIsAIModalOpen}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <div className="flex items-center justify-between">
+              <DialogTitle className="flex items-center gap-2">
+                <Brain className="w-5 h-5 text-primary" /> AI Session Insights
+              </DialogTitle>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setIsAIModalOpen(false)}
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            <DialogDescription>
+              Personalized coaching based on your session performance
+            </DialogDescription>
+          </DialogHeader>
+
+          {isGeneratingInsight ? (
+            <div className="py-12 flex flex-col items-center justify-center">
+              <Brain className="w-12 h-12 text-primary animate-pulse mb-4" />
+              <p className="text-muted-foreground">Analyzing your session...</p>
+            </div>
+          ) : aiInsight ? (
+            <div className="space-y-6 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+                    <span className="text-2xl font-bold text-primary">
+                      {aiInsight.score}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-lg">{aiInsight.summary}</p>
+                    <Badge variant="secondary">{aiInsight.badge}</Badge>
+                  </div>
+                </div>
+                <Award className="w-8 h-8 text-amber-500" />
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-primary" />
+                  <h4 className="font-semibold">Key Insights</h4>
+                </div>
+                <ul className="space-y-2">
+                  {aiInsight.insights.map((ins: string, i: number) => (
+                    <li
+                      key={i}
+                      className="text-sm text-muted-foreground flex gap-2"
+                    >
+                      <span className="text-primary mt-1">•</span>
+                      <span>{ins}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {aiInsight.tips?.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Lightbulb className="w-4 h-4 text-amber-500" />
+                    <h4 className="font-semibold">Actionable Tips</h4>
+                  </div>
+                  <ul className="space-y-2">
+                    {aiInsight.tips.map((tip: string, i: number) => (
+                      <li
+                        key={i}
+                        className="text-sm bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 flex gap-2"
+                      >
+                        <Sparkles className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                        <span>{tip}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="py-8 text-center text-muted-foreground">
+              No insights yet. Complete a session to get personalized coaching.
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button onClick={() => setIsAIModalOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -630,23 +1320,28 @@ export function TimerInterface({
 function StatCard({
   label,
   value,
+  icon: Icon,
   color,
   showProgress,
   progressValue,
 }: {
   label: string;
   value: string | number;
+  icon: any;
   color: string;
   showProgress?: boolean;
   progressValue?: number;
 }) {
   return (
     <Card>
-      <CardContent className="p-6 text-center">
-        <div className={cn("text-3xl font-bold mb-1", color)}>{value}</div>
-        <div className="text-sm text-muted-foreground">{label}</div>
+      <CardContent className="p-6">
+        <div className="flex items-center justify-between mb-3">
+          <Icon className={cn("w-5 h-5", color)} />
+          <div className={cn("text-3xl font-bold", color)}>{value}</div>
+        </div>
+        <div className="text-sm text-muted-foreground mb-2">{label}</div>
         {showProgress && typeof progressValue === "number" && (
-          <Progress value={progressValue} className="h-1 mt-3" />
+          <Progress value={progressValue} className="h-1.5" />
         )}
       </CardContent>
     </Card>

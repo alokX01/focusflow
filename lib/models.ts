@@ -20,6 +20,17 @@ export interface UserSettings {
   _id: ObjectId;
   userId: string;
 
+  // Vision controls
+  previewEnabled: boolean; // show video preview
+  overlayEnabled: boolean; // draw landmarks overlay
+  mirrorVideo: boolean; // mirror the video
+
+  // Focus integrator tuning
+  minFocusConfidence: number; // 0..100, default 35
+  focusGainPerSec: number; // e.g., +1.2 per sec when focused
+  defocusLossPerSec: number; // e.g., -4.0 per sec when looking away
+  noFaceLossPerSec: number; // e.g., -6.0 per sec when no face
+
   // Timer Settings
   focusDuration: number; // minutes
   shortBreakDuration: number;
@@ -66,6 +77,22 @@ export interface Session {
   duration: number; // seconds actually focused
   targetDuration: number; // seconds planned
   pausedDuration?: number; // time paused
+
+  timeline: [
+    {
+      t: Number; // Timestamp
+      focused: Boolean;
+      confidence: Number;
+    }
+  ];
+  task: {
+    type: String;
+    default: "";
+  };
+  isArchived: {
+    type: Boolean;
+    default: false;
+  };
 
   // Focus Metrics
   focusPercentage: number; // 0-100
