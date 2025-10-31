@@ -1,6 +1,7 @@
 /**
  * Face Detection + Focus Manager (hot-reload safe)
- * MediaPipe Face Mesh with TFJS WebGL fallback, mirrored input via canvas
+ * MediaPipe Face Mesh with TFJS WebGL fallback
+ * Supports mirrored input via internal canvas
  */
 
 let detector: any = null;
@@ -10,22 +11,24 @@ let runtime: "mediapipe" | "tfjs" | "unknown" = "unknown";
 let frameCanvas: HTMLCanvasElement | null = null;
 let frameCtx: CanvasRenderingContext2D | null = null;
 
+// Options
+let mirrored = true;
+
 type Keypoint = { x: number; y: number; name?: string };
-type Subscriber = (s: FaceFocusSnapshot) => void;
 
 export type FaceFocusSnapshot = {
-  // detection
   faceDetected: boolean;
   isLookingAtScreen: boolean;
   confidence: number; // 0-100
   keypoints?: Keypoint[];
-  // metrics
   fps: number;
   runtime: "mediapipe" | "tfjs" | "unknown";
   sourceW: number;
   sourceH: number;
   ts: number;
 };
+
+type Subscriber = (s: FaceFocusSnapshot) => void;
 
 type Manager = {
   video: HTMLVideoElement | null;
@@ -36,10 +39,9 @@ type Manager = {
   lastFrameTs: number;
   fpsCnt: number;
   fpsTs: number;
-  lastFaceSeenTs: number; // for debouncing
+  lastFaceSeenTs: number;
   hasFaceDebounced: boolean;
   includeKeypoints: boolean;
-  // methods
   initDetector: (prefer?: "mediapipe" | "tfjs") => Promise<void>;
   attachVideo: (video: HTMLVideoElement) => void;
   start: (opts?: { includeKeypoints?: boolean }) => void;
@@ -64,7 +66,7 @@ function getManager(): Manager {
     video: null,
     running: false,
     ready: false,
-    subscribers: new Set(),
+    subscribers: new Set<Subscriber>(),
     rafId: null,
     lastFrameTs: performance.now(),
     fpsCnt: 0,
@@ -74,7 +76,6 @@ function getManager(): Manager {
     includeKeypoints: false,
 
     initDetector: async (prefer = "mediapipe") => {
-      // Already initialized
       if (detector) return;
 
       const faceLandmarksDetection = await import(
@@ -85,7 +86,6 @@ function getManager(): Manager {
         const model = faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh;
         detector = await faceLandmarksDetection.createDetector(model, {
           runtime: "mediapipe",
-          // pin version to avoid upstream changes
           solutionPath: "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4",
           refineLandmarks: true,
           maxFaces: 1,
@@ -154,25 +154,34 @@ function getManager(): Manager {
       const loop = async () => {
         if (!mgr.running) return;
         const video = mgr.video;
-
         let snapshot: FaceFocusSnapshot | null = null;
 
         try {
           if (video && isVideoReady(video) && detector) {
             ensureFrameCanvas(video.videoWidth, video.videoHeight);
 
-            // draw mirrored frame
-            frameCtx!.save();
-            frameCtx!.translate(frameCanvas!.width, 0);
-            frameCtx!.scale(-1, 1);
-            frameCtx!.drawImage(
-              video,
-              0,
-              0,
-              frameCanvas!.width,
-              frameCanvas!.height
-            );
-            frameCtx!.restore();
+            // mirror input frame only if requested
+            if (mirrored) {
+              frameCtx!.save();
+              frameCtx!.translate(frameCanvas!.width, 0);
+              frameCtx!.scale(-1, 1);
+              frameCtx!.drawImage(
+                video,
+                0,
+                0,
+                frameCanvas!.width,
+                frameCanvas!.height
+              );
+              frameCtx!.restore();
+            } else {
+              frameCtx!.drawImage(
+                video,
+                0,
+                0,
+                frameCanvas!.width,
+                frameCanvas!.height
+              );
+            }
 
             const faces = await detector.estimateFaces(frameCanvas);
             const now = performance.now();
@@ -301,7 +310,8 @@ function checkGazeDirection(keypoints: Keypoint[]): {
   isLooking: boolean;
   confidence: number;
 } {
-  const byName = (name: string) => keypoints.find((k: any) => k.name === name);
+  const byName = (name: string) =>
+    (keypoints as any).find((k: any) => k.name === name);
   const IDX = {
     NOSE_TIP: 1,
     LEFT_EYE_INNER: 133,
@@ -337,11 +347,14 @@ function checkGazeDirection(keypoints: Keypoint[]): {
   const eyeCenterY = (leftEyeInner.y + rightEyeInner.y) / 2;
 
   const noseToEyeCenterX = Math.abs(nose.x - eyeCenterX);
-  const eyeWidth = Math.max(1, Math.abs(rightEyeOuter.x - leftEyeOuter.x));
+  const eyeWidth = Math.max(
+    1,
+    Math.abs((rightEyeOuter as any).x - (leftEyeOuter as any).x)
+  );
   const horizontalRatio = noseToEyeCenterX / eyeWidth;
 
   const noseToEyeY = Math.abs(nose.y - eyeCenterY);
-  const noseToChinY = Math.max(1, Math.abs(chin.y - nose.y));
+  const noseToChinY = Math.max(1, Math.abs((chin as any).y - (nose as any).y));
   const verticalRatio = noseToEyeY / noseToChinY;
 
   const HORIZONTAL_THRESHOLD = 0.18;
@@ -387,9 +400,13 @@ export async function ensureFaceFocus(video: HTMLVideoElement) {
   await mgr.initDetector("mediapipe");
 }
 
-export function startFaceFocus(opts?: { includeKeypoints?: boolean }) {
+export function startFaceFocus(opts?: {
+  includeKeypoints?: boolean;
+  mirrored?: boolean;
+}) {
+  if (typeof opts?.mirrored === "boolean") mirrored = opts.mirrored;
   const mgr = getManager();
-  mgr.start(opts);
+  mgr.start({ includeKeypoints: !!opts?.includeKeypoints });
 }
 
 export function stopFaceFocus() {
@@ -409,4 +426,16 @@ export async function cleanupFaceDetection() {
 
 export function getFaceDetectionRuntime(): "mediapipe" | "tfjs" | "unknown" {
   return runtime;
+}
+
+// Allow toggling options while running
+export function setFaceFocusOptions(opts: {
+  mirrored?: boolean;
+  includeKeypoints?: boolean;
+}) {
+  if (typeof opts.mirrored === "boolean") mirrored = opts.mirrored;
+  if (typeof opts.includeKeypoints === "boolean") {
+    const mgr = getManager();
+    mgr.includeKeypoints = opts.includeKeypoints;
+  }
 }

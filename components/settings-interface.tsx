@@ -31,23 +31,29 @@ import {
   RotateCcw,
   Loader2,
 } from "lucide-react";
-import { useSettings } from "@/hooks/use-settings";
+import { useSettingsContext } from "@/contexts/settings-context";
+import { Settings } from "@/hooks/use-settings";
 import { toast } from "sonner";
+import { Input } from "./ui/input";
 
 export function SettingsInterface() {
-  const { settings, isLoading, updateSettings, resetSettings } = useSettings();
+  const { settings, isLoading, updateSettings, resetSettings } =
+    useSettingsContext();
   const [isSaving, setIsSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
-  const [localSettings, setLocalSettings] = useState(settings);
+  const [localSettings, setLocalSettings] = useState<Settings>(settings);
 
+  // Update local settings when global settings change
   useEffect(() => {
-    if (settings) {
-      setLocalSettings(settings);
-    }
+    setLocalSettings(settings);
+    setHasChanges(false);
   }, [settings]);
 
-  const handleChange = (key: string, value: any) => {
-    setLocalSettings((prev: any) => ({ ...prev, [key]: value }));
+  const handleChange = <K extends keyof Settings>(
+    key: K,
+    value: Settings[K]
+  ) => {
+    setLocalSettings((prev) => ({ ...prev, [key]: value }));
     setHasChanges(true);
   };
 
@@ -59,6 +65,7 @@ export function SettingsInterface() {
       toast.success("Settings saved successfully!");
     } catch (error) {
       toast.error("Failed to save settings");
+      console.error(error);
     } finally {
       setIsSaving(false);
     }
@@ -72,6 +79,7 @@ export function SettingsInterface() {
         toast.success("Settings reset to defaults");
       } catch (error) {
         toast.error("Failed to reset settings");
+        console.error(error);
       }
     }
   };
@@ -81,7 +89,7 @@ export function SettingsInterface() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto space-y-6 pb-24">
       {/* Timer Settings */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -105,7 +113,7 @@ export function SettingsInterface() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <SliderSetting
                 label="Pomodoro Length"
-                value={localSettings.focusDuration || 25}
+                value={localSettings.focusDuration}
                 onChange={(v) => handleChange("focusDuration", v)}
                 min={15}
                 max={60}
@@ -114,7 +122,7 @@ export function SettingsInterface() {
               />
               <SliderSetting
                 label="Short Break"
-                value={localSettings.shortBreakDuration || 5}
+                value={localSettings.shortBreakDuration}
                 onChange={(v) => handleChange("shortBreakDuration", v)}
                 min={3}
                 max={15}
@@ -123,7 +131,7 @@ export function SettingsInterface() {
               />
               <SliderSetting
                 label="Long Break"
-                value={localSettings.longBreakDuration || 15}
+                value={localSettings.longBreakDuration}
                 onChange={(v) => handleChange("longBreakDuration", v)}
                 min={10}
                 max={30}
@@ -136,13 +144,13 @@ export function SettingsInterface() {
               <SwitchSetting
                 label="Auto-start breaks"
                 description="Automatically start break timers"
-                checked={localSettings.autoStartBreaks || false}
+                checked={localSettings.autoStartBreaks}
                 onChange={(v) => handleChange("autoStartBreaks", v)}
               />
               <SwitchSetting
                 label="Auto-start pomodoros"
                 description="Automatically start work sessions after breaks"
-                checked={localSettings.autoStartPomodoros || false}
+                checked={localSettings.autoStartPomodoros}
                 onChange={(v) => handleChange("autoStartPomodoros", v)}
               />
             </div>
@@ -150,7 +158,7 @@ export function SettingsInterface() {
         </Card>
       </motion.div>
 
-      {/* Focus Detection */}
+      {/* Focus Detection (extended with camera preview/overlay/mirror + focus scoring) */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -171,6 +179,7 @@ export function SettingsInterface() {
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
+            {/* Camera master toggle */}
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium">Enable camera tracking</p>
@@ -187,40 +196,93 @@ export function SettingsInterface() {
                   {localSettings.cameraEnabled ? "Active" : "Disabled"}
                 </Badge>
                 <Switch
-                  checked={localSettings.cameraEnabled || false}
+                  checked={localSettings.cameraEnabled}
                   onCheckedChange={(v) => handleChange("cameraEnabled", v)}
                 />
               </div>
             </div>
 
+            {/* Vision controls */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <SwitchSetting
+                label="Show video preview"
+                description="Display live camera preview during focus sessions"
+                checked={!!localSettings.previewEnabled}
+                onChange={(v) => handleChange("previewEnabled", v)}
+              />
+              <SwitchSetting
+                label="Show overlay (landmarks)"
+                description="Render face landmarks on the preview"
+                checked={!!localSettings.overlayEnabled}
+                onChange={(v) => handleChange("overlayEnabled", v)}
+              />
+              <SwitchSetting
+                label="Mirror video"
+                description="Flip preview horizontally (front camera style)"
+                checked={!!localSettings.mirrorVideo}
+                onChange={(v) => handleChange("mirrorVideo", v)}
+              />
+            </div>
+
+            {/* Distraction threshold + Pause on distraction */}
             <SliderSetting
               label="Distraction threshold"
               description="How long you can look away before being marked as distracted"
-              value={localSettings.distractionThreshold || 3}
+              value={localSettings.distractionThreshold}
               onChange={(v) => handleChange("distractionThreshold", v)}
               min={1}
               max={10}
               step={1}
               unit="seconds"
             />
-
             <SwitchSetting
               label="Pause timer on distraction"
               description="Automatically pause when you look away"
-              checked={localSettings.pauseOnDistraction || false}
+              checked={localSettings.pauseOnDistraction}
               onChange={(v) => handleChange("pauseOnDistraction", v)}
             />
 
-            <div className="flex items-center justify-between pt-4 border-t border-border">
-              <div>
-                <p className="text-sm font-medium">Gaze calibration</p>
-                <p className="text-xs text-muted-foreground">
-                  Improve accuracy with personalized calibration
-                </p>
+            {/* Focus scoring knobs */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+              <SliderSetting
+                label="Min focus confidence"
+                description="Confidence threshold to count as focused"
+                value={localSettings.minFocusConfidence}
+                onChange={(v) => handleChange("minFocusConfidence", v)}
+                min={0}
+                max={100}
+                step={1}
+                unit=""
+              />
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <NumberSetting
+                  label="Gain when focused"
+                  description="% per second"
+                  value={Number(localSettings.focusGainPerSec ?? 1.2)}
+                  min={0}
+                  max={10}
+                  step={0.1}
+                  onChange={(num) => handleChange("focusGainPerSec", num)}
+                />
+                <NumberSetting
+                  label="Loss when away"
+                  description="% per second"
+                  value={Number(localSettings.defocusLossPerSec ?? 4.0)}
+                  min={0}
+                  max={20}
+                  step={0.1}
+                  onChange={(num) => handleChange("defocusLossPerSec", num)}
+                />
+                <NumberSetting
+                  label="Loss when no face"
+                  description="% per second"
+                  value={Number(localSettings.noFaceLossPerSec ?? 6.0)}
+                  min={0}
+                  max={30}
+                  step={0.1}
+                  onChange={(num) => handleChange("noFaceLossPerSec", num)}
+                />
               </div>
-              <Button variant="outline" size="sm">
-                Calibrate Now
-              </Button>
             </div>
           </CardContent>
         </Card>
@@ -250,25 +312,25 @@ export function SettingsInterface() {
             <SwitchSetting
               label="Sound notifications"
               description="Play sounds for timer events"
-              checked={localSettings.soundEnabled || false}
+              checked={localSettings.soundEnabled}
               onChange={(v) => handleChange("soundEnabled", v)}
             />
             <SwitchSetting
               label="Desktop notifications"
               description="Show system notifications"
-              checked={localSettings.desktopNotifications || false}
+              checked={localSettings.desktopNotifications}
               onChange={(v) => handleChange("desktopNotifications", v)}
             />
             <SwitchSetting
               label="Break reminders"
               description="Remind you to take breaks"
-              checked={localSettings.breakReminders || false}
+              checked={localSettings.breakReminders}
               onChange={(v) => handleChange("breakReminders", v)}
             />
             <SwitchSetting
               label="Eye strain reminders"
               description="Suggest eye rest during long sessions"
-              checked={localSettings.eyeStrainReminders || false}
+              checked={localSettings.eyeStrainReminders}
               onChange={(v) => handleChange("eyeStrainReminders", v)}
             />
           </CardContent>
@@ -317,7 +379,7 @@ export function SettingsInterface() {
                 How long to keep your session data
               </p>
               <Select
-                value={localSettings.dataRetention?.toString() || "30"}
+                value={localSettings.dataRetention.toString()}
                 onValueChange={(v) =>
                   handleChange("dataRetention", parseInt(v))
                 }
@@ -337,7 +399,7 @@ export function SettingsInterface() {
             <SwitchSetting
               label="Anonymous analytics"
               description="Help improve FocusFlow with usage data"
-              checked={localSettings.analyticsSharing || false}
+              checked={localSettings.analyticsSharing}
               onChange={(v) => handleChange("analyticsSharing", v)}
             />
           </CardContent>
@@ -366,8 +428,10 @@ export function SettingsInterface() {
             <div className="space-y-2">
               <label className="text-sm font-medium">Theme</label>
               <Select
-                value={localSettings.theme || "system"}
-                onValueChange={(v) => handleChange("theme", v)}
+                value={localSettings.theme}
+                onValueChange={(v) =>
+                  handleChange("theme", v as "light" | "dark" | "system")
+                }
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -383,42 +447,44 @@ export function SettingsInterface() {
             <SwitchSetting
               label="Reduced motion"
               description="Minimize animations and transitions"
-              checked={localSettings.reducedMotion || false}
+              checked={localSettings.reducedMotion}
               onChange={(v) => handleChange("reducedMotion", v)}
             />
           </CardContent>
         </Card>
       </motion.div>
 
-      {/* Action Buttons */}
+      {/* Action Buttons - Fixed at bottom */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 0.5 }}
-        className="flex items-center justify-between pt-6 border-t border-border sticky bottom-0 bg-background py-4"
+        className="fixed bottom-0 left-0 right-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-t border-border z-50"
       >
-        <Button variant="outline" onClick={handleReset} className="gap-2">
-          <RotateCcw className="w-4 h-4" />
-          Reset to Defaults
-        </Button>
+        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
+          <Button variant="outline" onClick={handleReset} className="gap-2">
+            <RotateCcw className="w-4 h-4" />
+            Reset to Defaults
+          </Button>
 
-        <Button
-          onClick={handleSave}
-          disabled={!hasChanges || isSaving}
-          className="gap-2"
-        >
-          {isSaving ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Saving...
-            </>
-          ) : (
-            <>
-              <Save className="w-4 h-4" />
-              Save Settings
-            </>
-          )}
-        </Button>
+          <Button
+            onClick={handleSave}
+            disabled={!hasChanges || isSaving}
+            className="gap-2"
+          >
+            {isSaving ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4" />
+                Save Settings
+              </>
+            )}
+          </Button>
+        </div>
       </motion.div>
     </div>
   );
@@ -485,6 +551,46 @@ function SwitchSetting({
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>
       <Switch checked={checked} onCheckedChange={onChange} />
+    </div>
+  );
+}
+
+function NumberSetting({
+  label,
+  description,
+  value,
+  onChange,
+  min,
+  max,
+  step = 0.1,
+}: {
+  label: string;
+  description?: string;
+  value: number;
+  onChange: (v: number) => void;
+  min: number;
+  max: number;
+  step?: number;
+}) {
+  return (
+    <div className="space-y-1">
+      <label className="text-sm font-medium">{label}</label>
+      {description && (
+        <p className="text-xs text-muted-foreground">{description}</p>
+      )}
+      <Input
+        type="number"
+        value={Number.isFinite(value) ? value : 0}
+        step={step}
+        min={min}
+        max={max}
+        onChange={(e) => {
+          const raw = Number(e.target.value);
+          if (!Number.isFinite(raw)) return;
+          const clamped = Math.max(min, Math.min(max, raw));
+          onChange(step === 1 ? Math.round(clamped) : clamped);
+        }}
+      />
     </div>
   );
 }

@@ -39,9 +39,6 @@ export default function DashboardPage() {
                 : ""}
               ! 👋
             </h1>
-            <p className="text-muted-foreground">
-              Ready to achieve deep focus?
-            </p>
           </div>
 
           <TimerInterface

@@ -1,6 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+  Fragment,
+} from "react";
 import { motion } from "framer-motion";
 import {
   Card,
@@ -11,202 +18,399 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Filter,
-  TrendingUp,
-  Clock,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import {
   Eye,
-  Target,
   Download,
   Calendar,
+  MoreHorizontal,
+  Pencil,
+  Archive,
+  ArchiveRestore,
+  Trash2,
+  Loader2,
+  Sparkles,
+  Clock,
+  Target,
+  TrendingUp,
+  Filter,
+  Search,
   X,
+  LucideIcon,
 } from "lucide-react";
-import { MonthlyChart } from "@/components/monthly-chart";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 interface Session {
-  id: string;
-  time: string;
-  duration: number;
-  focusScore: number;
-  distractions: number;
-  type: "focus" | "break" | "pomodoro";
-  goal?: string;
-  tags?: string[];
-}
-
-interface DayData {
-  id: string;
-  date: string;
-  sessions: Session[];
-  totalFocusTime: number;
-  averageFocusScore: number;
-  totalDistractions: number;
+  _id: string;
+  startTime: string; // ISO
+  endTime?: string; // ISO
+  duration: number; // seconds
+  focusPercentage: number; // 0-100
+  distractionCount: number;
+  sessionType: "focus" | "break" | "pomodoro";
+  task: string;
+  isArchived: boolean;
 }
 
 type Period = "week" | "month" | "quarter" | "year";
 
+type TimelineSample = {
+  t: number; // seconds since session start
+  focused: boolean; // isLooking
+  confidence?: number;
+};
+
 export function HistoryInterface() {
   const [selectedPeriod, setSelectedPeriod] = useState<Period>("week");
-  const [historicalSessions, setHistoricalSessions] = useState<DayData[]>([]);
-  const [selectedSession, setSelectedSession] = useState<
-    (Session & { date: string }) | null
-  >(null);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [filtered, setFiltered] = useState<Session[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [monthlyStats, setMonthlyStats] = useState({
-    totalSessions: 0,
-    totalFocusTime: 0,
-    averageFocusScore: 0,
-    bestDay: { date: "", score: 0 },
-    improvement: 0,
-  });
 
-  useEffect(() => {
-    fetchHistoricalData();
-  }, [selectedPeriod]);
+  // Inline details (no dialog)
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [selectedSession, setSelectedSession] = useState<Session | null>(null);
 
-  const fetchHistoricalData = async () => {
+  // AI / timeline
+  const [aiInsight, setAiInsight] = useState("");
+  const [isGeneratingInsight, setIsGeneratingInsight] = useState(false);
+  const [timeline, setTimeline] = useState<TimelineSample[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingTaskName, setEditingTaskName] = useState("");
+
+  const [showArchived, setShowArchived] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const abortRef = useRef<AbortController | null>(null);
+
+  // FIX 1: Wrap fetchHistoricalData in useCallback to prevent infinite loops
+  const fetchHistoricalData = useCallback(async () => {
     setIsLoading(true);
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+
     try {
       const response = await fetch(
-        `/api/sessions?period=${selectedPeriod}&limit=30`
+        `/api/sessions?period=${selectedPeriod}&archived=${
+          showArchived ? "true" : "false"
+        }`,
+        { signal: ac.signal, cache: "no-store" }
       );
-      if (response.ok) {
-        const data = await response.json();
-        // Process and group sessions by day
-        const groupedSessions = groupSessionsByDay(data.sessions);
-        setHistoricalSessions(groupedSessions);
+      if (!response.ok) throw new Error("Failed to fetch sessions");
+      const data = await response.json();
 
-        // Calculate stats
-        calculateMonthlyStats(data.sessions);
+      const sorted = data.sessions.sort(
+        (a: Session, b: Session) =>
+          new Date(b.startTime).getTime() - new Date(a.startTime).getTime()
+      );
+
+      const normalized = sorted.map((s: Session) => ({
+        ...s,
+        task: s.task && s.task.trim().length ? s.task : "(No Task)",
+      }));
+
+      setSessions(normalized);
+      setFiltered(normalized);
+    } catch (error: any) {
+      if (error.name !== "AbortError") {
+        console.error("Failed to fetch history:", error);
+        toast.error("Failed to load session history");
       }
-    } catch (error) {
-      console.error("Failed to fetch history:", error);
-      toast.error("Failed to load session history");
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [selectedPeriod, showArchived]); // FIX 2: Added proper dependencies
 
-  const groupSessionsByDay = (sessions: any[]): DayData[] => {
-    const grouped = sessions.reduce((acc: any, session: any) => {
-      const date = new Date(session.startTime).toISOString().split("T")[0];
-      if (!acc[date]) {
-        acc[date] = {
-          id: date,
-          date,
-          sessions: [],
-          totalFocusTime: 0,
-          totalDistractions: 0,
-          averageFocusScore: 0,
-        };
-      }
+  // Load list for period + archived toggle
+  useEffect(() => {
+    fetchHistoricalData();
+    return () => abortRef.current?.abort();
+  }, [fetchHistoricalData]); // FIX 3: Now using the memoized function
 
-      acc[date].sessions.push({
-        id: session._id,
-        time: new Date(session.startTime).toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-        duration: Math.round(session.duration / 60),
-        focusScore: session.focusPercentage,
-        distractions: session.distractionCount,
-        type: session.sessionType,
-        goal: session.goal,
-        tags: session.tags,
-      });
-
-      acc[date].totalFocusTime += Math.round(session.duration / 60);
-      acc[date].totalDistractions += session.distractionCount;
-
-      return acc;
-    }, {});
-
-    // Calculate averages
-    Object.values(grouped).forEach((day: any) => {
-      day.averageFocusScore = Math.round(
-        day.sessions.reduce(
-          (sum: number, s: Session) => sum + s.focusScore,
-          0
-        ) / day.sessions.length
-      );
-    });
-
-    return Object.values(grouped).sort(
-      (a: any, b: any) =>
-        new Date(b.date).getTime() - new Date(a.date).getTime()
+  // Apply search filter when query changes
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setFiltered(sessions);
+      return;
+    }
+    const q = searchQuery.toLowerCase();
+    setFiltered(
+      sessions.filter(
+        (s) =>
+          (s.task || "").toLowerCase().includes(q) ||
+          new Date(s.startTime).toLocaleString().toLowerCase().includes(q)
+      )
     );
-  };
+  }, [searchQuery, sessions]);
 
-  const calculateMonthlyStats = (sessions: any[]) => {
-    if (sessions.length === 0) return;
-
-    const totalFocusMinutes = sessions.reduce(
-      (sum, s) => sum + s.duration / 60,
-      0
+  // Stats
+  const stats = useMemo(() => {
+    if (!filtered.length)
+      return {
+        totalSessions: 0,
+        totalMinutes: 0,
+        avgFocus: 0,
+        bestFocusedMin: 0,
+      };
+    const mins = filtered.reduce((sum, s) => sum + s.duration / 60, 0);
+    const avg = Math.round(
+      filtered.reduce((sum, s) => sum + (s.focusPercentage || 0), 0) /
+        filtered.length
     );
-    const avgScore = Math.round(
-      sessions.reduce((sum, s) => sum + s.focusPercentage, 0) / sessions.length
-    );
+    const best = filtered.reduce((best, s) => {
+      const fm = (s.duration * (s.focusPercentage / 100)) / 60;
+      return fm > best ? fm : best;
+    }, 0);
+    return {
+      totalSessions: filtered.length,
+      totalMinutes: Math.round(mins),
+      avgFocus: avg,
+      bestFocusedMin: Math.round(best),
+    };
+  }, [filtered]);
 
-    // Find best day
-    const dailyScores = groupSessionsByDay(sessions);
-    const bestDay = dailyScores.reduce((best, day) =>
-      day.averageFocusScore > best.averageFocusScore ? day : best
-    );
-
-    setMonthlyStats({
-      totalSessions: sessions.length,
-      totalFocusTime: Math.round((totalFocusMinutes / 60) * 10) / 10,
-      averageFocusScore: avgScore,
-      bestDay: {
-        date: bestDay.date,
-        score: bestDay.averageFocusScore,
-      },
-      improvement: 15, // TODO: Calculate actual improvement
-    });
-  };
-
+  // Export CSV
   const handleExport = async () => {
     try {
-      const response = await fetch(`/api/export?period=${selectedPeriod}`);
-      if (response.ok) {
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `focusflow-history-${selectedPeriod}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-        toast.success("History exported successfully!");
-      }
-    } catch (error) {
+      const res = await fetch(`/api/export?period=${selectedPeriod}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `focusflow-history-${selectedPeriod}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success("History exported successfully!");
+    } catch {
       toast.error("Failed to export history");
     }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString("en-US", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
+  // AI insight
+  const fetchAiInsight = useCallback(
+    async (session: Session) => {
+      setIsGeneratingInsight(true);
+      setAiInsight("");
+      try {
+        const resp = await fetch(`/api/sessions/${session._id}/insight`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ period: selectedPeriod }),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          setAiInsight(data.insight || "No insight generated.");
+        } else {
+          setAiInsight(fallbackInsight(session));
+        }
+      } catch {
+        setAiInsight(fallbackInsight(session));
+      } finally {
+        setIsGeneratingInsight(false);
+      }
+    },
+    [selectedPeriod]
+  );
+
+  // Timeline
+  const fetchTimeline = useCallback(async (sessionId: string) => {
+    setTimeline([]);
+    setTimelineLoading(true);
+    try {
+      const response = await fetch(`/api/sessions/${sessionId}/timeline`, {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        if (response.status === 404) {
+          console.warn("Timeline API not found, falling back to empty array.");
+          setTimeline([]);
+          return;
+        }
+        throw new Error("Failed to fetch timeline");
+      }
+      const data = await response.json();
+      setTimeline(Array.isArray(data.timeline) ? data.timeline : []);
+    } catch (error) {
+      console.error(error);
+      setTimeline([]);
+    } finally {
+      setTimelineLoading(false);
+    }
+  }, []);
+
+  // Expand/collapse details
+  const handleToggleDetails = (session: Session) => {
+    const isSame = expandedId === session._id;
+    if (isSame) {
+      setExpandedId(null);
+      setSelectedSession(null);
+      setAiInsight("");
+      setTimeline([]);
+      return;
+    }
+    setExpandedId(session._id);
+    setSelectedSession(session);
+    fetchAiInsight(session);
+    fetchTimeline(session._id);
   };
 
-  const getFocusScoreColor = (score: number) => {
-    if (score >= 90) return "text-green-500";
-    if (score >= 75) return "text-blue-500";
-    if (score >= 60) return "text-amber-500";
-    return "text-red-500";
+  // FIX 4: Add missing handleEditClick function
+  const handleEditClick = (session: Session) => {
+    setEditingSessionId(session._id);
+    setEditingTaskName(session.task);
   };
 
-  const getFocusScoreBadge = (
+  // FIX 5: Add missing handleSaveTask function
+  const handleSaveTask = async (sessionId: string, shouldSave: boolean) => {
+    if (!shouldSave) {
+      setEditingSessionId(null);
+      setEditingTaskName("");
+      return;
+    }
+
+    const taskName = editingTaskName.trim() || "(No Task)";
+    const original = [...sessions];
+
+    // Optimistic update
+    const updated = sessions.map((s) =>
+      s._id === sessionId ? { ...s, task: taskName } : s
+    );
+    setSessions(updated);
+    setFiltered(updated);
+
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task: taskName }),
+      });
+
+      if (!resp.ok) throw new Error("Failed to update task");
+
+      toast.success("Task updated");
+    } catch (e) {
+      // Rollback on error
+      setSessions(original);
+      setFiltered(original);
+      toast.error("Failed to update task");
+    } finally {
+      setEditingSessionId(null);
+      setEditingTaskName("");
+    }
+  };
+
+  // Archive / Unarchive (toggle) with optimistic UI + refetch
+  const handleArchiveToggle = async (session: Session) => {
+    const toArchived = !session.isArchived;
+    const original = [...sessions];
+
+    // FIX 6: Improved optimistic update logic
+    const optimistic = sessions.map((s) =>
+      s._id === session._id ? { ...s, isArchived: toArchived } : s
+    );
+
+    setSessions(optimistic);
+
+    // Apply current filter
+    const filtered = optimistic.filter((s) =>
+      showArchived ? s.isArchived : !s.isArchived
+    );
+    setFiltered(filtered);
+
+    // Close details if the session is being removed from current view
+    if (expandedId === session._id && toArchived !== showArchived) {
+      setExpandedId(null);
+      setSelectedSession(null);
+      setAiInsight("");
+      setTimeline([]);
+    }
+
+    try {
+      const resp = await fetch(`/api/sessions/${session._id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isArchived: toArchived }),
+      });
+      if (!resp.ok) throw new Error("Failed to update archive state");
+
+      toast.success(toArchived ? "Session archived" : "Session unarchived");
+
+      // Final sync with server
+      fetchHistoricalData();
+    } catch (e) {
+      // rollback
+      setSessions(original);
+      setFiltered(original);
+      toast.error("Failed to update session");
+    }
+  };
+
+  // Delete session with confirm + optimistic UI
+  const handleDelete = async (session: Session) => {
+    if (
+      !confirm("Delete this session permanently? This action cannot be undone.")
+    )
+      return;
+
+    const original = [...sessions];
+    // Optimistic removal
+    const remaining = sessions.filter((s) => s._id !== session._id);
+    setSessions(remaining);
+    setFiltered(remaining);
+    if (expandedId === session._id) {
+      setExpandedId(null);
+      setSelectedSession(null);
+      setAiInsight("");
+      setTimeline([]);
+    }
+
+    try {
+      const resp = await fetch(`/api/sessions/${session._id}`, {
+        method: "DELETE",
+      });
+      if (!resp.ok) throw new Error("Failed to delete");
+      toast.success("Session deleted");
+    } catch (e) {
+      setSessions(original);
+      setFiltered(original);
+      toast.error("Failed to delete session");
+    }
+  };
+
+  // Helpers
+  const formatDuration = (seconds: number) => {
+    if (seconds < 60) return `${seconds}s`;
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return s ? `${m}m ${s}s` : `${m}m`;
+  };
+
+  const getFocusBadgeVariant = (
     score: number
   ): "default" | "secondary" | "destructive" => {
     if (score >= 80) return "default";
@@ -214,25 +418,57 @@ export function HistoryInterface() {
     return "destructive";
   };
 
+  const periodLabel = useMemo(() => {
+    const map: Record<Period, string> = {
+      week: "this week",
+      month: "this month",
+      quarter: "this quarter",
+      year: "this year",
+    };
+    return map[selectedPeriod];
+  }, [selectedPeriod]);
+
   return (
     <div className="space-y-6">
       {/* Controls */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+        className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3"
       >
-        <Tabs
-          value={selectedPeriod}
-          onValueChange={(v) => setSelectedPeriod(v as Period)}
-        >
-          <TabsList>
-            <TabsTrigger value="week">Week</TabsTrigger>
-            <TabsTrigger value="month">Month</TabsTrigger>
-            <TabsTrigger value="quarter">Quarter</TabsTrigger>
-            <TabsTrigger value="year">Year</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="flex items-center gap-3 flex-wrap">
+          <Tabs
+            value={selectedPeriod}
+            onValueChange={(v) => setSelectedPeriod(v as Period)}
+          >
+            <TabsList>
+              <TabsTrigger value="week">Week</TabsTrigger>
+              <TabsTrigger value="month">Month</TabsTrigger>
+              <TabsTrigger value="quarter">Quarter</TabsTrigger>
+              <TabsTrigger value="year">Year</TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          <div className="relative">
+            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search by task or date…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-8 h-9 w-56"
+            />
+          </div>
+
+          <Button
+            variant={showArchived ? "default" : "outline"}
+            size="sm"
+            className="gap-2"
+            onClick={() => setShowArchived((s) => !s)}
+          >
+            <Filter className="w-4 h-4" />
+            {showArchived ? "Show Unarchived" : "Show Archived"}
+          </Button>
+        </div>
 
         <Button
           variant="outline"
@@ -245,428 +481,618 @@ export function HistoryInterface() {
         </Button>
       </motion.div>
 
-      {/* Monthly Overview */}
-      {isLoading ? (
-        <StatsLoading />
-      ) : (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.1 }}
-          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
-        >
-          <StatCard
-            icon={Target}
-            label="Total Sessions"
-            value={monthlyStats.totalSessions}
-            subtext={`+${monthlyStats.improvement}% this ${selectedPeriod}`}
-            color="bg-primary"
-            trend
-          />
-          <StatCard
-            icon={Clock}
-            label="Focus Time"
-            value={`${monthlyStats.totalFocusTime}h`}
-            subtext={`${Math.round(
-              (monthlyStats.totalFocusTime / monthlyStats.totalSessions) * 60
-            )}min avg`}
-            color="bg-green-500"
-          />
-          <StatCard
-            icon={Eye}
-            label="Avg Focus Score"
-            value={`${monthlyStats.averageFocusScore}%`}
-            color="bg-blue-500"
-            showProgress
-            progressValue={monthlyStats.averageFocusScore}
-          />
-          <StatCard
-            icon={TrendingUp}
-            label="Best Day"
-            value={`${monthlyStats.bestDay.score}%`}
-            subtext={new Date(monthlyStats.bestDay.date).toLocaleDateString()}
-            color="bg-amber-500"
-          />
-        </motion.div>
-      )}
-
-      {/* Monthly Chart */}
+      {/* Quick Stats */}
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="grid grid-cols-1 md:grid-cols-3 gap-4"
       >
-        <Card>
-          <CardHeader>
-            <CardTitle>Monthly Progress</CardTitle>
-            <CardDescription>Your focus score trend over time</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <Skeleton className="h-64 w-full" />
-            ) : (
-              <MonthlyChart data={historicalSessions} />
-            )}
-          </CardContent>
-        </Card>
+        <StatMini label="Total Sessions" value={stats.totalSessions} />
+        <StatMini
+          label="Focus Time"
+          value={`${Math.floor(stats.totalMinutes / 60)}h ${
+            stats.totalMinutes % 60
+          }m`}
+        />
+        <StatMini label="Avg Focus" value={`${stats.avgFocus}%`} />
       </motion.div>
 
-      {/* Daily Sessions */}
+      {/* Session Log + inline details */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3 }}
+        transition={{ delay: 0.1 }}
       >
         <Card>
           <CardHeader>
-            <CardTitle>Session History</CardTitle>
-            <CardDescription>
-              Detailed breakdown of your focus sessions
-            </CardDescription>
+            <CardTitle>Session Log</CardTitle>
+            <CardDescription>All sessions {periodLabel}.</CardDescription>
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <div className="space-y-6">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="space-y-3">
-                    <Skeleton className="h-12 w-full" />
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      {[1, 2, 3].map((j) => (
-                        <Skeleton key={j} className="h-32 w-full" />
-                      ))}
-                    </div>
-                  </div>
+              <div className="space-y-2">
+                {[...Array(6)].map((_, i) => (
+                  <Skeleton key={i} className="h-12 w-full" />
                 ))}
               </div>
-            ) : historicalSessions.length === 0 ? (
+            ) : filtered.length === 0 ? (
               <div className="text-center py-12">
                 <Calendar className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                <p className="text-muted-foreground">No sessions found</p>
+                <p className="font-medium text-muted-foreground">
+                  No sessions found
+                </p>
                 <p className="text-sm text-muted-foreground">
-                  Start a focus session to see your history
+                  Start a focus session to see your history here.
                 </p>
               </div>
             ) : (
-              <div className="space-y-6">
-                {historicalSessions.map((day, dayIndex) => (
-                  <motion.div
-                    key={day.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: dayIndex * 0.05 }}
-                    className="space-y-4"
-                  >
-                    {/* Day Header */}
-                    <div className="flex items-center justify-between pb-2 border-b border-border">
-                      <div>
-                        <h4 className="font-medium">{formatDate(day.date)}</h4>
-                        <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
-                          <span>{day.sessions.length} sessions</span>
-                          <span>{day.totalFocusTime}min total</span>
-                          <span
-                            className={getFocusScoreColor(
-                              day.averageFocusScore
-                            )}
-                          >
-                            {day.averageFocusScore}% avg
-                          </span>
-                        </div>
-                      </div>
-                      <Badge
-                        variant={getFocusScoreBadge(day.averageFocusScore)}
+              <>
+                {/* Mobile Cards */}
+                <div className="block md:hidden space-y-3">
+                  {filtered.map((session) => {
+                    const isExpanded = expandedId === session._id;
+                    return (
+                      <Card
+                        key={session._id}
+                        className={cn(session.isArchived && "opacity-70")}
                       >
-                        {day.averageFocusScore}%
-                      </Badge>
-                    </div>
-
-                    {/* Sessions Grid */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {day.sessions.map((session, sessionIndex) => (
-                        <motion.div
-                          key={session.id}
-                          whileHover={{ scale: 1.02 }}
-                          whileTap={{ scale: 0.98 }}
-                          onClick={() =>
-                            setSelectedSession({ ...session, date: day.date })
-                          }
-                          className="p-4 rounded-lg border border-border hover:border-primary/50 transition-all cursor-pointer bg-card"
-                        >
-                          <div className="flex items-center justify-between mb-3">
-                            <span className="text-sm font-medium">
-                              {session.time}
-                            </span>
-                            <Badge
-                              variant={
-                                session.type === "focus"
-                                  ? "default"
-                                  : "secondary"
-                              }
-                              className="text-xs"
-                            >
-                              {session.type}
-                            </Badge>
+                        <CardContent className="p-4">
+                          <div className="flex justify-between items-start mb-3">
+                            <div className="flex-1">
+                              <div className="text-sm text-muted-foreground mb-1">
+                                {new Date(session.startTime).toLocaleString(
+                                  "en-US",
+                                  {
+                                    month: "short",
+                                    day: "numeric",
+                                    hour: "numeric",
+                                    minute: "2-digit",
+                                    hour12: true,
+                                  }
+                                )}
+                              </div>
+                              {editingSessionId === session._id ? (
+                                <Input
+                                  value={editingTaskName}
+                                  onChange={(e) =>
+                                    setEditingTaskName(e.target.value)
+                                  }
+                                  className="h-8 mb-2"
+                                  autoFocus
+                                  onBlur={() =>
+                                    handleSaveTask(session._id, true)
+                                  }
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter")
+                                      handleSaveTask(session._id, true);
+                                    if (e.key === "Escape")
+                                      handleSaveTask(session._id, false);
+                                  }}
+                                />
+                              ) : (
+                                <p className="font-medium line-clamp-2 mb-2">
+                                  {session.task}
+                                </p>
+                              )}
+                            </div>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  onClick={() => handleToggleDetails(session)}
+                                >
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  {isExpanded ? "Hide details" : "View details"}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => handleEditClick(session)}
+                                >
+                                  <Pencil className="mr-2 h-4 w-4" /> Edit Task
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => handleArchiveToggle(session)}
+                                >
+                                  {session.isArchived ? (
+                                    <>
+                                      <ArchiveRestore className="mr-2 h-4 w-4" />{" "}
+                                      Unarchive
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Archive className="mr-2 h-4 w-4" />{" "}
+                                      Archive
+                                    </>
+                                  )}
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  className="text-red-500"
+                                  onClick={() => handleDelete(session)}
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" /> Delete
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
 
-                          <div className="space-y-2">
-                            <div className="flex justify-between text-sm">
-                              <span className="text-muted-foreground">
-                                Duration
-                              </span>
-                              <span className="font-medium">
-                                {session.duration}min
-                              </span>
+                          {/* Quick Stats */}
+                          <div className="flex gap-4 text-sm">
+                            <div className="flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-muted-foreground" />
+                              <span>{formatDuration(session.duration)}</span>
                             </div>
-                            <div className="flex justify-between text-sm">
-                              <span className="text-muted-foreground">
-                                Focus
-                              </span>
-                              <span
-                                className={getFocusScoreColor(
-                                  session.focusScore
+                            <div className="flex items-center gap-1">
+                              <Badge
+                                variant={getFocusBadgeVariant(
+                                  session.focusPercentage
                                 )}
                               >
-                                {session.focusScore}%
-                              </span>
+                                {session.focusPercentage.toFixed(2)}%
+                              </Badge>
                             </div>
-                            <div className="flex justify-between text-sm">
-                              <span className="text-muted-foreground">
-                                Distractions
+                            <div className="flex items-center gap-1">
+                              <Target className="w-3 h-3 text-muted-foreground" />
+                              <span>
+                                {session.distractionCount} distractions
                               </span>
-                              <span>{session.distractions}</span>
                             </div>
                           </div>
 
-                          <Progress
-                            value={session.focusScore}
-                            className="h-1 mt-3"
-                          />
+                          {/* Expanded */}
+                          {isExpanded && selectedSession && (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: "auto" }}
+                              exit={{ opacity: 0, height: 0 }}
+                              className="mt-4 pt-4 border-t"
+                            >
+                              <div className="bg-muted p-3 rounded-lg mb-3">
+                                <h3 className="font-semibold mb-2 flex items-center text-sm">
+                                  <Sparkles className="w-4 h-4 mr-2 text-primary" />
+                                  AI Coach's Insight
+                                </h3>
+                                {isGeneratingInsight ? (
+                                  <div className="flex items-center text-sm text-muted-foreground">
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />{" "}
+                                    Analyzing...
+                                  </div>
+                                ) : (
+                                  <p className="text-sm">
+                                    {aiInsight || "No insight available."}
+                                  </p>
+                                )}
+                              </div>
 
-                          {session.goal && (
-                            <p className="text-xs text-muted-foreground mt-2 line-clamp-1">
-                              🎯 {session.goal}
-                            </p>
+                              <div className="grid grid-cols-2 gap-3 mb-3">
+                                <MiniStat
+                                  icon={Clock}
+                                  label="Duration"
+                                  value={formatDuration(
+                                    selectedSession.duration
+                                  )}
+                                />
+                                <MiniStat
+                                  icon={Eye}
+                                  label="Focus"
+                                  value={`${selectedSession.focusPercentage.toFixed(
+                                    2
+                                  )}%`}
+                                  color="text-blue-500"
+                                />
+                                <MiniStat
+                                  icon={TrendingUp}
+                                  label="Focused Time"
+                                  value={formatDuration(
+                                    Math.round(
+                                      selectedSession.duration *
+                                        (selectedSession.focusPercentage / 100)
+                                    )
+                                  )}
+                                  color="text-green-500"
+                                />
+                                <MiniStat
+                                  icon={Target}
+                                  label="Distractions"
+                                  value={selectedSession.distractionCount}
+                                  color="text-amber-500"
+                                />
+                              </div>
+
+                              <div>
+                                <h3 className="font-semibold mb-2 text-sm">
+                                  Session Timeline
+                                </h3>
+                                {timelineLoading ? (
+                                  <Skeleton className="h-16 w-full" />
+                                ) : timeline.length > 0 ? (
+                                  <TimelineBar
+                                    samples={timeline}
+                                    duration={selectedSession.duration}
+                                  />
+                                ) : (
+                                  <div className="h-16 w-full bg-muted rounded-md flex items-center justify-center text-xs text-muted-foreground">
+                                    No timeline available
+                                  </div>
+                                )}
+                              </div>
+
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  handleToggleDetails(selectedSession)
+                                }
+                                className="w-full mt-3"
+                              >
+                                Close Details
+                              </Button>
+                            </motion.div>
                           )}
-                        </motion.div>
-                      ))}
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+
+                {/* Desktop table */}
+                <div className="hidden md:block overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date & Time</TableHead>
+                        <TableHead>Task</TableHead>
+                        <TableHead>Duration</TableHead>
+                        <TableHead>Focus</TableHead>
+                        <TableHead>Distractions</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filtered.map((session) => {
+                        const isExpanded = expandedId === session._id;
+                        return (
+                          <Fragment key={session._id}>
+                            <TableRow
+                              className={cn(session.isArchived && "opacity-70")}
+                            >
+                              <TableCell>
+                                {new Date(session.startTime).toLocaleString(
+                                  "en-US",
+                                  {
+                                    month: "short",
+                                    day: "numeric",
+                                    hour: "numeric",
+                                    minute: "2-digit",
+                                    hour12: true,
+                                  }
+                                )}
+                              </TableCell>
+                              <TableCell className="max-w-[320px]">
+                                {editingSessionId === session._id ? (
+                                  <Input
+                                    value={editingTaskName}
+                                    onChange={(e) =>
+                                      setEditingTaskName(e.target.value)
+                                    }
+                                    className="h-8"
+                                    autoFocus
+                                    onBlur={() =>
+                                      handleSaveTask(session._id, true)
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter")
+                                        handleSaveTask(session._id, true);
+                                      if (e.key === "Escape")
+                                        handleSaveTask(session._id, false);
+                                    }}
+                                  />
+                                ) : (
+                                  <span className="font-medium line-clamp-1">
+                                    {session.task}
+                                  </span>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                {formatDuration(session.duration)}
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant={getFocusBadgeVariant(
+                                    session.focusPercentage
+                                  )}
+                                >
+                                  {session.focusPercentage.toFixed(2)}%
+                                </Badge>
+                              </TableCell>
+                              <TableCell>{session.distractionCount}</TableCell>
+                              <TableCell className="text-right">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      aria-expanded={isExpanded}
+                                    >
+                                      <MoreHorizontal className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem
+                                      onClick={() =>
+                                        handleToggleDetails(session)
+                                      }
+                                    >
+                                      <Eye className="mr-2 h-4 w-4" />
+                                      {isExpanded
+                                        ? "Hide details"
+                                        : "View details"}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() => handleEditClick(session)}
+                                    >
+                                      <Pencil className="mr-2 h-4 w-4" /> Edit
+                                      Task
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() =>
+                                        handleArchiveToggle(session)
+                                      }
+                                    >
+                                      {session.isArchived ? (
+                                        <>
+                                          <ArchiveRestore className="mr-2 h-4 w-4" />{" "}
+                                          Unarchive
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Archive className="mr-2 h-4 w-4" />{" "}
+                                          Archive
+                                        </>
+                                      )}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      className="text-red-500"
+                                      onClick={() => handleDelete(session)}
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" /> Delete
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </TableCell>
+                            </TableRow>
+
+                            {/* Expanded details row - Desktop */}
+                            {isExpanded && selectedSession && (
+                              <TableRow>
+                                <TableCell colSpan={6} className="p-0">
+                                  <motion.div
+                                    initial={{ opacity: 0, y: -4 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -4 }}
+                                    className="p-4 bg-muted/30 border-t border-border"
+                                  >
+                                    <div className="flex items-center justify-between mb-3">
+                                      <div className="text-sm text-muted-foreground">
+                                        {new Date(
+                                          selectedSession.startTime
+                                        ).toLocaleString("en-US", {
+                                          dateStyle: "full",
+                                          timeStyle: "short",
+                                        })}
+                                      </div>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() =>
+                                          handleToggleDetails(selectedSession)
+                                        }
+                                        className="gap-1"
+                                      >
+                                        <X className="w-4 h-4" />
+                                        Close
+                                      </Button>
+                                    </div>
+
+                                    {/* AI Coaching Insight */}
+                                    <div className="bg-muted p-4 rounded-lg mb-4">
+                                      <h3 className="font-semibold mb-2 flex items-center">
+                                        <Sparkles className="w-4 h-4 mr-2 text-primary" />
+                                        AI Coach's Insight
+                                      </h3>
+                                      {isGeneratingInsight ? (
+                                        <div className="flex items-center text-sm text-muted-foreground">
+                                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                          Analyzing your session...
+                                        </div>
+                                      ) : (
+                                        <p className="text-sm">
+                                          {aiInsight || "No insight available."}
+                                        </p>
+                                      )}
+                                    </div>
+
+                                    {/* Key Metrics */}
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                                      <MiniStat
+                                        icon={Clock}
+                                        label="Duration"
+                                        value={formatDuration(
+                                          selectedSession.duration
+                                        )}
+                                      />
+                                      <MiniStat
+                                        icon={Eye}
+                                        label="Focus Score"
+                                        value={`${selectedSession.focusPercentage.toFixed(
+                                          2
+                                        )}%`}
+                                        color="text-blue-500"
+                                      />
+                                      <MiniStat
+                                        icon={TrendingUp}
+                                        label="Focused Time"
+                                        value={formatDuration(
+                                          Math.round(
+                                            selectedSession.duration *
+                                              (selectedSession.focusPercentage /
+                                                100)
+                                          )
+                                        )}
+                                        color="text-green-500"
+                                      />
+                                      <MiniStat
+                                        icon={Target}
+                                        label="Distractions"
+                                        value={selectedSession.distractionCount}
+                                        color="text-amber-500"
+                                      />
+                                    </div>
+
+                                    {/* Timeline */}
+                                    <div>
+                                      <h3 className="font-semibold mb-2">
+                                        Session Timeline
+                                      </h3>
+                                      {timelineLoading ? (
+                                        <Skeleton className="h-20 w-full" />
+                                      ) : timeline.length > 0 ? (
+                                        <TimelineBar
+                                          samples={timeline}
+                                          duration={selectedSession.duration}
+                                        />
+                                      ) : (
+                                        <div className="h-20 w-full bg-muted rounded-md flex items-center justify-center text-muted-foreground">
+                                          No timeline available for this session
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {/* Task */}
+                                    {selectedSession.task !== "(No Task)" && (
+                                      <div className="p-4 rounded-lg border border-border mt-4">
+                                        <p className="text-sm font-medium mb-1">
+                                          Session Task
+                                        </p>
+                                        <p className="text-muted-foreground">
+                                          {selectedSession.task}
+                                        </p>
+                                      </div>
+                                    )}
+                                  </motion.div>
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
       </motion.div>
-
-      {/* Session Details Modal */}
-      {selectedSession && (
-        <SessionDetailsModal
-          session={selectedSession}
-          onClose={() => setSelectedSession(null)}
-        />
-      )}
     </div>
   );
 }
 
-// Stat Card Component
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  subtext,
-  color,
-  trend,
-  showProgress,
-  progressValue,
-}: {
-  icon: any;
-  label: string;
-  value: string | number;
-  subtext?: string;
-  color: string;
-  trend?: boolean;
-  showProgress?: boolean;
-  progressValue?: number;
-}) {
+// FIX 7: Removed unused badgeVariant prop
+function StatMini({ label, value }: { label: string; value: string | number }) {
   return (
     <Card>
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between mb-3">
-          <div
-            className={`w-12 h-12 rounded-lg ${color}/10 flex items-center justify-center`}
-          >
-            <Icon className={`w-6 h-6 ${color.replace("bg-", "text-")}`} />
-          </div>
-          {trend && <TrendingUp className="w-4 h-4 text-green-500" />}
-        </div>
-        <div className="space-y-1">
-          <p className="text-sm text-muted-foreground">{label}</p>
-          <p className="text-2xl font-bold">{value}</p>
-          {subtext && (
-            <p className="text-xs text-muted-foreground">{subtext}</p>
-          )}
-        </div>
-        {showProgress && progressValue !== undefined && (
-          <Progress value={progressValue} className="h-1 mt-3" />
-        )}
+      <CardContent className="p-4">
+        <div className="text-sm text-muted-foreground">{label}</div>
+        <div className="mt-1 text-2xl font-bold">{value}</div>
       </CardContent>
     </Card>
   );
 }
 
-// Session Details Modal
-function SessionDetailsModal({
-  session,
-  onClose,
+// FIX 8: Proper typing for icon prop
+function MiniStat({
+  icon: Icon,
+  label,
+  value,
+  color,
 }: {
-  session: Session & { date: string };
-  onClose: () => void;
+  icon: LucideIcon;
+  label: string;
+  value: string | number;
+  color?: string;
 }) {
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ scale: 0.95, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.95, opacity: 0 }}
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-2xl"
-      >
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>Session Details</CardTitle>
-                <CardDescription>
-                  {new Date(session.date).toLocaleDateString()} at{" "}
-                  {session.time}
-                </CardDescription>
-              </div>
-              <Button variant="ghost" size="sm" onClick={onClose}>
-                <X className="w-4 h-4" />
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Stats Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="text-center p-4 rounded-lg bg-muted/30">
-                <Clock className="w-5 h-5 mx-auto mb-2 text-primary" />
-                <div className="text-lg font-bold">{session.duration}min</div>
-                <div className="text-xs text-muted-foreground">Duration</div>
-              </div>
-              <div className="text-center p-4 rounded-lg bg-muted/30">
-                <Eye className="w-5 h-5 mx-auto mb-2 text-blue-500" />
-                <div className="text-lg font-bold">{session.focusScore}%</div>
-                <div className="text-xs text-muted-foreground">Focus Score</div>
-              </div>
-              <div className="text-center p-4 rounded-lg bg-muted/30">
-                <TrendingUp className="w-5 h-5 mx-auto mb-2 text-green-500" />
-                <div className="text-lg font-bold">
-                  {Math.round(session.duration * (session.focusScore / 100))}min
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  Focused Time
-                </div>
-              </div>
-              <div className="text-center p-4 rounded-lg bg-muted/30">
-                <Target className="w-5 h-5 mx-auto mb-2 text-amber-500" />
-                <div className="text-lg font-bold">{session.distractions}</div>
-                <div className="text-xs text-muted-foreground">
-                  Distractions
-                </div>
-              </div>
-            </div>
-
-            {/* Goal */}
-            {session.goal && (
-              <div className="p-4 rounded-lg border border-border">
-                <p className="text-sm font-medium mb-1">Session Goal</p>
-                <p className="text-muted-foreground">{session.goal}</p>
-              </div>
-            )}
-
-            {/* Tags */}
-            {session.tags && session.tags.length > 0 && (
-              <div>
-                <p className="text-sm font-medium mb-2">Tags</p>
-                <div className="flex flex-wrap gap-2">
-                  {session.tags.map((tag, i) => (
-                    <Badge key={i} variant="secondary">
-                      {tag}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Focus Timeline Placeholder */}
-            <div>
-              <p className="text-sm font-medium mb-3">Focus Timeline</p>
-              <div className="h-8 bg-muted/30 rounded-lg overflow-hidden flex">
-                <div
-                  className="bg-green-500"
-                  style={{ width: `${session.focusScore}%` }}
-                />
-                <div
-                  className="bg-red-500"
-                  style={{ width: `${100 - session.focusScore}%` }}
-                />
-              </div>
-              <div className="flex justify-between text-xs text-muted-foreground mt-1">
-                <span>Start</span>
-                <span>End</span>
-              </div>
-            </div>
-
-            {/* Overall Performance */}
-            <div className="border-t border-border pt-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium">Overall Performance</p>
-                  <p className="text-xs text-muted-foreground">
-                    {session.focusScore >= 90
-                      ? "Excellent focus!"
-                      : session.focusScore >= 75
-                      ? "Good session"
-                      : "Room for improvement"}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <div className="text-lg font-bold">{session.focusScore}%</div>
-                  <Progress
-                    value={session.focusScore}
-                    className="w-24 h-1 mt-1"
-                  />
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
-    </motion.div>
+    <div className="text-center p-3 rounded-lg bg-muted/50">
+      <Icon className={cn("w-5 h-5 mx-auto mb-1", color || "text-primary")} />
+      <div className="text-lg font-bold">{value}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
+    </div>
   );
 }
 
-// Loading States
-function StatsLoading() {
+/* Simple block timeline */
+function TimelineBar({
+  samples,
+  duration,
+}: {
+  samples: TimelineSample[];
+  duration: number;
+}) {
+  if (samples.length === 0 || duration <= 0) return null;
+  const segments = Math.min(60, Math.max(10, Math.round(duration / 10)));
+  const blockWidth = 100 / segments;
+
+  const segFocused = Array(segments).fill(0);
+  const segCount = Array(segments).fill(0);
+  for (const s of samples) {
+    const idx = Math.min(segments - 1, Math.floor((s.t / duration) * segments));
+    segCount[idx] += 1;
+    segFocused[idx] += s.focused ? 1 : 0;
+  }
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-      {[1, 2, 3, 4].map((i) => (
-        <Card key={i}>
-          <CardContent className="p-6 space-y-3">
-            <Skeleton className="h-12 w-12 rounded-lg" />
-            <Skeleton className="h-4 w-24" />
-            <Skeleton className="h-8 w-16" />
-            <Skeleton className="h-3 w-32" />
-          </CardContent>
-        </Card>
-      ))}
+    <div className="h-20 w-full bg-muted rounded-md overflow-hidden">
+      <div className="flex h-full">
+        {segCount.map((c, i) => {
+          const ratio = c ? segFocused[i] / c : 0;
+          const color =
+            ratio > 0.7
+              ? "bg-green-500"
+              : ratio > 0.3
+              ? "bg-amber-500"
+              : "bg-red-500";
+          return (
+            <div
+              key={i}
+              className={cn("h-full", color)}
+              style={{ width: `${blockWidth}%` }}
+              title={`${Math.round(ratio * 100)}% focused`}
+            />
+          );
+        })}
+      </div>
+      <div className="flex justify-between text-[10px] px-1 text-muted-foreground mt-1">
+        <span>Start</span>
+        <span>End</span>
+      </div>
     </div>
   );
+}
+
+/* Simple fallback AI rule if API fails */
+function fallbackInsight(session: Session) {
+  const focus = session.focusPercentage || 0;
+  const d = session.distractionCount || 0;
+  if (focus < 50)
+    return `This session struggled (focus ${focus}%). Try a shorter block and eliminate obvious distractions (phone out of reach).`;
+  if (d >= 6)
+    return `Focus was decent (${focus}%), but ${d} distractions broke flow. Identify and remove the top trigger.`;
+  if (focus >= 85)
+    return `Excellent session (${focus}%). Whatever you did here, repeat it — same environment and time of day.`;
+  return `Solid session (${focus}%). Aim to trim small distractions to push above 80%.`;
 }

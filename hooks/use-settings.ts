@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 
-interface UserSettings {
-  // Timer
+export interface Settings {
+  // Timer Settings
   focusDuration: number;
   shortBreakDuration: number;
   longBreakDuration: number;
@@ -16,6 +16,16 @@ interface UserSettings {
   distractionThreshold: number;
   pauseOnDistraction: boolean;
 
+  previewEnabled: boolean; // show/hide visible preview
+  overlayEnabled: boolean; // draw landmarks overlay
+  mirrorVideo: boolean; // mirror preview + detector input
+
+  // NEW focus integrator tuning
+  minFocusConfidence: number; // 0..100 (confidence gate)
+  focusGainPerSec: number; // +%/sec when focused
+  defocusLossPerSec: number; // -%/sec when looking away (face present)
+  noFaceLossPerSec: number; // -%/sec when no face
+
   // Notifications
   soundEnabled: boolean;
   desktopNotifications: boolean;
@@ -24,21 +34,20 @@ interface UserSettings {
 
   // Privacy
   dataRetention: number;
-  localProcessing: boolean;
   analyticsSharing: boolean;
 
   // Appearance
-  theme: string;
+  theme: "light" | "dark" | "system";
   reducedMotion: boolean;
 }
 
-const DEFAULT_SETTINGS: UserSettings = {
+const DEFAULT_SETTINGS: Settings = {
   focusDuration: 25,
   shortBreakDuration: 5,
   longBreakDuration: 15,
   autoStartBreaks: false,
   autoStartPomodoros: false,
-  cameraEnabled: false,
+  cameraEnabled: true,
   distractionThreshold: 3,
   pauseOnDistraction: true,
   soundEnabled: true,
@@ -46,49 +55,52 @@ const DEFAULT_SETTINGS: UserSettings = {
   breakReminders: true,
   eyeStrainReminders: true,
   dataRetention: 30,
-  localProcessing: true,
   analyticsSharing: false,
   theme: "system",
   reducedMotion: false,
+  previewEnabled: true,
+  overlayEnabled: true,
+  mirrorVideo: true,
+  minFocusConfidence: 35,
+  focusGainPerSec: 1.2,
+  defocusLossPerSec: 4.0,
+  noFaceLossPerSec: 6.0,
 };
 
 export function useSettings() {
   const { data: session, status } = useSession();
-  const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch settings
-  // Add logging to fetchSettings:
   const fetchSettings = useCallback(async () => {
-    console.log("🔧 Fetching settings, auth status:", status);
-
     if (status !== "authenticated") {
-      console.log("⚠️ Not authenticated, using defaults");
       setSettings(DEFAULT_SETTINGS);
       setIsLoading(false);
       return;
     }
 
-    setIsLoading(true);
-    setError(null);
-
     try {
-      console.log("📡 Fetching settings from API...");
-      const response = await fetch("/api/settings");
+      setIsLoading(true);
+      const response = await fetch("/api/settings", {
+        method: "GET",
+        cache: "no-store",
+      });
 
-      if (response.ok) {
-        const data = await response.json();
-        console.log("✅ Settings fetched:", data.settings);
-        setSettings({ ...DEFAULT_SETTINGS, ...data.settings });
-      } else if (response.status === 404) {
-        console.log("⚠️ No settings found, using defaults");
-        setSettings(DEFAULT_SETTINGS);
-      } else {
+      if (!response.ok) {
+        if (response.status === 404) {
+          await createDefaultSettings();
+          return;
+        }
         throw new Error("Failed to fetch settings");
       }
+
+      const data = await response.json();
+      if (data.success && data.data.settings) {
+        setSettings({ ...DEFAULT_SETTINGS, ...data.data.settings });
+      }
     } catch (err: any) {
-      console.error("❌ Settings fetch failed:", err);
+      console.error("Error fetching settings:", err);
       setError(err.message);
       setSettings(DEFAULT_SETTINGS);
     } finally {
@@ -96,60 +108,70 @@ export function useSettings() {
     }
   }, [status]);
 
-  useEffect(() => {
-    fetchSettings();
-  }, [fetchSettings]);
+  const createDefaultSettings = async () => {
+    try {
+      const response = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(DEFAULT_SETTINGS),
+      });
 
-  // Update settings
-  const updateSettings = useCallback(
-    async (newSettings: Partial<UserSettings>) => {
-      if (status !== "authenticated") {
-        // Update local state only for unauthenticated users
-        setSettings((prev) => ({ ...prev, ...newSettings }));
-        return;
-      }
-
-      try {
-        const response = await fetch("/api/settings", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(newSettings),
-        });
-
-        if (!response.ok) {
-          throw new Error("Failed to update settings");
-        }
-
+      if (response.ok) {
         const data = await response.json();
-        setSettings(data.settings);
-      } catch (err: any) {
-        setError(err.message);
-        throw err;
+        setSettings({ ...DEFAULT_SETTINGS, ...data.data.settings });
       }
-    },
-    [status]
-  );
-
-  // Reset to defaults
-  const resetSettings = useCallback(async () => {
-    if (status !== "authenticated") {
-      setSettings(DEFAULT_SETTINGS);
-      return;
+    } catch (err) {
+      console.error("Error creating default settings:", err);
     }
+  };
 
+  const updateSettings = useCallback(async (newSettings: Partial<Settings>) => {
+    try {
+      const response = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newSettings),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to update settings");
+      }
+
+      const data = await response.json();
+      if (data.success && data.data.settings) {
+        setSettings({ ...DEFAULT_SETTINGS, ...data.data.settings });
+        return data.data.settings;
+      }
+    } catch (err: any) {
+      console.error("Error updating settings:", err);
+      throw err;
+    }
+  }, []);
+
+  const resetSettings = useCallback(async () => {
     try {
       const response = await fetch("/api/settings", {
         method: "DELETE",
       });
 
-      if (response.ok) {
-        setSettings(DEFAULT_SETTINGS);
+      if (!response.ok) {
+        throw new Error("Failed to reset settings");
+      }
+
+      const data = await response.json();
+      if (data.success && data.data.settings) {
+        setSettings({ ...DEFAULT_SETTINGS, ...data.data.settings });
+        return data.data.settings;
       }
     } catch (err: any) {
-      setError(err.message);
+      console.error("Error resetting settings:", err);
       throw err;
     }
-  }, [status]);
+  }, []);
+
+  useEffect(() => {
+    fetchSettings();
+  }, [fetchSettings]);
 
   return {
     settings,
@@ -157,6 +179,6 @@ export function useSettings() {
     error,
     updateSettings,
     resetSettings,
-    refetch: fetchSettings,
+    refetchSettings: fetchSettings,
   };
 }
