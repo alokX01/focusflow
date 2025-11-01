@@ -1,7 +1,6 @@
 "use client";
-
-import SplineScene from "@splinetool/react-spline/next";
-import { Suspense, lazy, useEffect } from "react";
+import Spline from "@splinetool/react-spline/next";
+import { Suspense, useEffect } from "react";
 import Link from "next/link";
 import { motion, useMotionValue, useTransform } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -40,15 +39,19 @@ export default function Index() {
   return (
     <main className="relative min-h-screen bg-background text-foreground overflow-hidden">
       {/* Spline 3D Background */}
-      <div className="fixed inset-0 -z-10">
+      <div className="fixed inset-0 -z-10 mt-10">
         <Suspense fallback={<div className="w-full h-full bg-background" />}>
-          <SplineScene scene="https://prod.spline.design/DIVNf-bqF-sUPUjy/scene.splinecode" />
+          {/* Use the dynamically imported component */}
+          <Spline
+            scene="https://prod.spline.design/DIVNf-bqF-sUPUjy/scene.splinecode"
+            className="w-full h-full" // Ensure dimensions are taken
+          />
         </Suspense>
       </div>
 
-      {/* Gradient Overlays */}
-      <div className="fixed inset-0 -z-10 bg-gradient-to-b from-background/40 via-background/60 to-background/90" />
-      <div className="fixed inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,rgba(0,198,255,0.1),transparent_50%)]" />
+      {/* 💡 FIX 2: Changed to-background/50 to to-background/30 for maximum transparency */}
+      <div className="fixed inset-0 -z-10 bg-gradient-to-b from-background/40 via-background/60 **to-background/30**" />
+      <div className="fixed inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,rgba(0,198,255,0.1),transparent_20%)]" />
 
       {/* Floating Glow Orbs */}
       <AuroraLayer />

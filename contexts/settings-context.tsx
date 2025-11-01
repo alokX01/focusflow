@@ -49,7 +49,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <SettingsContext.Provider value={settingsData}>
+    <SettingsContext.Provider value={value}>
       {children}
     </SettingsContext.Provider>
   );
