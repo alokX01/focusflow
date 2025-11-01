@@ -7,7 +7,7 @@ interface DistractionData {
   distractions: number;
 }
 
-export function DistractionChart() {
+export function DistractionChart(data: any) {
   const [distractionData, setDistractionData] = useState<DistractionData[]>([]);
   const [maxDistractions, setMaxDistractions] = useState(0);
 
