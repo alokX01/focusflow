@@ -137,7 +137,7 @@ export async function POST(request: NextRequest) {
     const db = await getDatabase();
 
     // UPDATED: Added all fields from your interface
-    const newSession: Omit<Session, "_id"> = {
+    const newSession: any = {
       userId,
 
       // Time tracking
