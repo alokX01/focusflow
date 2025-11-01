@@ -169,7 +169,7 @@ export async function DELETE(request: NextRequest) {
 
     await db.collection("userSettings").insertOne(defaultSettings);
 
-    const { _id, createdAt, updatedAt, ...userSettings } = defaultSettings;
+    const { createdAt, updatedAt, ...userSettings } = defaultSettings;
 
     return apiResponse(
       { settings: userSettings },
