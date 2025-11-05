@@ -1,7 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-@custom-variant dark (&:is(.dark *));
+/* @custom-variant removed (unknown at-rule).
+   Define dark mode in tailwind.config.js, e.g.:
+   module.exports = { darkMode: 'class', ... }
+*/
 
 :root {
   --background: oklch(1 0 0);
@@ -84,7 +87,7 @@
   --sidebar-ring: oklch(0.439 0 0);
 }
 
-@theme inline {
+:root {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --color-background: var(--background);
@@ -132,12 +135,15 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    box-sizing: border-box;
+    border-color: var(--color-border);
   }
+
   body {
-    @apply bg-background text-foreground;
+    background-color: var(--color-background);
+    color: var(--color-foreground);
   }
-  
+
   /* Accessibility improvements */
   @media (prefers-reduced-motion: reduce) {
     *,
@@ -148,20 +154,20 @@
       transition-duration: 0.01ms !important;
     }
   }
-  
+
   /* Focus indicators for keyboard navigation */
   .focus-visible:focus-visible {
     outline: 2px solid var(--focus-primary);
     outline-offset: 2px;
   }
-  
+
   /* High contrast mode support */
   @media (prefers-contrast: high) {
     :root {
       --border: oklch(0.2 0 0);
       --ring: oklch(0.2 0 0);
     }
-    
+
     .dark {
       --border: oklch(0.8 0 0);
       --ring: oklch(0.8 0 0);
@@ -172,40 +178,44 @@
 @layer utilities {
   /* Focus-specific utilities */
   .focus-gradient {
-    background: linear-gradient(135deg, var(--focus-primary), var(--focus-secondary));
+    background: linear-gradient(
+      135deg,
+      var(--focus-primary),
+      var(--focus-secondary)
+    );
   }
-  
+
   .focus-glow {
     box-shadow: 0 0 20px var(--focus-primary) / 0.3;
   }
-  
+
   .focus-pulse {
     animation: focus-pulse 2s ease-in-out infinite;
   }
-  
+
   .concentration-mode {
     filter: grayscale(0.1) contrast(1.05);
   }
-  
+
   .break-reminder {
     background: linear-gradient(135deg, var(--warning), var(--focus-accent));
   }
-  
+
   .success-state {
     background: linear-gradient(135deg, var(--success), var(--focus-accent));
   }
-  
+
   /* Smooth transitions for focus states */
   .focus-transition {
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
-  
+
   /* Timer-specific styles */
   .timer-active {
     background: var(--focus-primary);
     color: var(--primary-foreground);
   }
-  
+
   .timer-break {
     background: var(--focus-accent);
     color: var(--primary-foreground);
@@ -213,7 +223,8 @@
 }
 
 @keyframes focus-pulse {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
   }
   50% {

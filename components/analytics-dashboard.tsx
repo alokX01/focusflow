@@ -153,7 +153,9 @@ export function AnalyticsDashboard() {
             label="Avg Focus Score"
             value={`${analytics?.averageFocus || 0}%`}
             subtext={
-              analytics?.averageFocus >= 80 ? "Excellent!" : "Keep improving"
+              (analytics?.averageFocus ?? 0) >= 80
+                ? "Excellent!"
+                : "Keep improving"
             }
             color="bg-purple-500"
             showProgress

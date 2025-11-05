@@ -12,14 +12,29 @@ export const dynamic = "force-dynamic";
 // VALIDATION SCHEMA
 // ============================================
 
+// Schema for a single timeline sample (must match client-side definition)
+const TimelineSampleSchema = z.object({
+  t: z.number().min(0), // seconds since session start
+  focused: z.boolean(),
+  confidence: z.number().min(0).max(1).optional(),
+});
+
 const UpdateSessionSchema = z.object({
   duration: z.number().min(0).optional(),
   focusPercentage: z.number().min(0).max(100).optional(),
   distractionCount: z.number().min(0).optional(),
   isCompleted: z.boolean().optional(),
   endTime: z.string().datetime().optional(),
-  goal: z.string().max(200).optional(),
+  // UPDATED: Changed 'goal' to 'task' to match your new logic and HistoryInterface
+  task: z
+    .string()
+    .max(200)
+    .optional()
+    .transform((val) => (val !== undefined ? val.trim() : val)), // Added trim
   tags: z.array(z.string()).max(10).optional(),
+  // ADDED: New field for soft delete (archiving)
+  isArchived: z.boolean().optional(),
+  timeline: z.array(TimelineSampleSchema).optional(),
 });
 
 // ============================================
@@ -96,6 +111,8 @@ export async function PATCH(
     const body = await request.json();
 
     // Validate input
+    // This will now accept { task: "..." } and { isArchived: true }
+    // in addition to the session-end fields.
     const validated = UpdateSessionSchema.parse(body);
 
     const db = await getDatabase();
@@ -106,6 +123,8 @@ export async function PATCH(
     }
 
     // Prepare update data
+    // The 'validated' object will only contain the fields that were passed
+    // and validated, so spreading it here is safe.
     const updateData: any = {
       ...validated,
       updatedAt: new Date(),
@@ -135,7 +154,8 @@ export async function PATCH(
       return apiError("Session not found or update failed", 404);
     }
 
-    // Update daily stats if completed
+    // Update daily stats only if session is being marked as completed
+    // This will NOT run if you are just archiving or changing the task.
     if (validated.isCompleted) {
       await updateDailyStats(db, userId);
     }

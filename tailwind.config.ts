@@ -1,22 +1,29 @@
 import type { Config } from "tailwindcss";
+import animate from "tailwindcss-animate";
 
 const config: Config = {
-  darkMode: ["class"],
+  // Fix: use string or full tuple
+  // darkMode: ["class"], // ❌ wrong length tuple
+  darkMode: "class", // ✅ or: darkMode: ["class", ".dark"],
+
   content: [
-    "./pages/**/*.{js,ts,jsx,tsx,mdx}",
-    "./components/**/*.{js,ts,jsx,tsx,mdx}",
-    "./app/**/*.{js,ts,jsx,tsx,mdx}",
+    "./pages//*.{js,ts,jsx,tsx,mdx}",
+    "./components//.{js,ts,jsx,tsx,mdx}",
+    "./app/**/.{js,ts,jsx,tsx,mdx}",
   ],
+
   theme: {
     container: {
       center: true,
       padding: "2rem",
-      screens: {
-        "2xl": "1400px",
-      },
+      screens: { "2xl": "1400px" },
     },
     extend: {
       colors: {
+        // If your CSS variables hold OKLCH colors (as in your global.css),
+        // you should map directly to var(--...) instead of hsl(var(--...)).
+        // The lines below keep your current mapping. If your colors look off,
+        // change "hsl(var(--...))" to "var(--...)".
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -72,7 +79,9 @@ const config: Config = {
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+
+  // Fix: ESM import for the plugin
+  plugins: [animate],
 };
 
 export default config;

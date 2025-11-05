@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
 
     // Add insights if requested
     if (query.includeInsights) {
-      analytics.insights = generateInsights(analytics);
+      (analytics as any).insights = generateInsights(analytics);
     }
 
     return NextResponse.json({
@@ -386,7 +386,7 @@ async function calculateStreak(db: any, userId: string): Promise<number> {
 
   // Allow today to not have a session yet
   const todayStr = today.toISOString().split("T")[0];
-  const hasToday = dates.some((d) => d._id === todayStr);
+  const hasToday = dates.some((d: { _id: string }) => d._id === todayStr);
 
   if (!hasToday) {
     checkDate.setDate(checkDate.getDate() - 1);
@@ -394,7 +394,7 @@ async function calculateStreak(db: any, userId: string): Promise<number> {
 
   for (let i = 0; i < 365; i++) {
     const dateStr = checkDate.toISOString().split("T")[0];
-    const hasSession = dates.some((d) => d._id === dateStr);
+    const hasSession = dates.some((d: { _id: string }) => d._id === dateStr);
 
     if (hasSession) {
       streak++;

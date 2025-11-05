@@ -397,7 +397,7 @@ async function calculateStreak(db: any, userId: string): Promise<number> {
 
   for (let i = 0; i < 365; i++) {
     const dateStr = currentDate.toISOString().split("T")[0];
-    const hasSession = dates.some((d) => d._id === dateStr);
+    const hasSession = dates.some((d: { _id: string }) => d._id === dateStr);
 
     if (hasSession) {
       streak++;

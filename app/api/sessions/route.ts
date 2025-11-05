@@ -4,11 +4,7 @@ import { getDatabase } from "@/lib/mongodb";
 import { authOptions } from "@/lib/auth";
 import { ObjectId } from "mongodb";
 import { z } from "zod";
-import type {
-  Session,
-  CreateSessionInput,
-  SessionsResponse,
-} from "@/lib/models";
+import type { Session, SessionsResponse } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
 
@@ -20,18 +16,41 @@ const CreateSessionSchema = z.object({
   targetDuration: z.number().min(1).max(240), // 1-240 minutes
   sessionType: z.enum(["focus", "break", "pomodoro"]).default("focus"),
   cameraEnabled: z.boolean().default(false),
-  goal: z.string().max(200).optional(),
+  // UPDATED: Replaced 'goal' with 'task' to match your components
+  task: z.string().max(200).optional(),
   tags: z.array(z.string()).max(10).default([]),
 });
 
-const SessionFiltersSchema = z.object({
-  limit: z.number().min(1).max(100).default(50),
-  offset: z.number().min(0).default(0),
-  startDate: z.string().datetime().optional(),
-  endDate: z.string().datetime().optional(),
-  minFocus: z.number().min(0).max(100).optional(),
-  sessionType: z.enum(["focus", "break", "pomodoro"]).optional(),
-});
+// Helper function to get start date from period
+function getStartDateFromPeriod(period?: string | null): Date | undefined {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0); // Start of today
+
+  switch (period) {
+    case "week":
+      // Start of the week (e.g., Sunday)
+      now.setDate(now.getDate() - now.getDay());
+      return now;
+    case "month":
+      // Start of the month
+      now.setDate(1);
+      return now;
+    case "quarter":
+      // Start of the quarter
+      const quarterMonth = Math.floor(now.getMonth() / 3) * 3;
+      now.setMonth(quarterMonth, 1);
+      return now;
+    case "year":
+      // Start of the year
+      now.setMonth(0, 1);
+      return now;
+    default:
+      // Default: if no period, maybe return last 7 days or undefined
+      // For this use case, we'll match 'week' as a default if period is missing
+      now.setDate(now.getDate() - now.getDay());
+      return now;
+  }
+}
 
 // ============================================
 // GET - Fetch Sessions with Filtering
@@ -48,94 +67,47 @@ export async function GET(request: NextRequest) {
     const userId = (session.user as any).id || session.user.email;
     const { searchParams } = new URL(request.url);
 
-    // Parse and validate filters
-    const filters = SessionFiltersSchema.parse({
-      limit: parseInt(searchParams.get("limit") || "50"),
-      offset: parseInt(searchParams.get("offset") || "0"),
-      startDate: searchParams.get("startDate") || undefined,
-      endDate: searchParams.get("endDate") || undefined,
-      minFocus: searchParams.get("minFocus")
-        ? parseInt(searchParams.get("minFocus")!)
-        : undefined,
-      sessionType: searchParams.get("sessionType") || undefined,
-    });
+    // UPDATED: Read filters from HistoryInterface
+    const period = searchParams.get("period");
+    const archived = searchParams.get("archived");
 
     const db = await getDatabase();
 
     // Build MongoDB query
     const query: any = { userId };
 
-    if (filters.startDate || filters.endDate) {
-      query.startTime = {};
-      if (filters.startDate) query.startTime.$gte = new Date(filters.startDate);
-      if (filters.endDate) query.startTime.$lte = new Date(filters.endDate);
+    // 1. Handle Archived Filter
+    // This logic ensures that by default, archived items are hidden
+    // Only if 'archived' is explicitly "true" will we show them.
+    if (archived === "true") {
+      query.isArchived = true;
+    } else {
+      query.isArchived = { $ne: true }; // $ne: true matches 'false' or 'null'
     }
 
-    if (filters.minFocus !== undefined) {
-      query.focusPercentage = { $gte: filters.minFocus };
+    // 2. Handle Period Filter
+    const startDate = getStartDateFromPeriod(period);
+    if (startDate) {
+      query.startTime = { $gte: startDate };
     }
 
-    if (filters.sessionType) {
-      query.sessionType = filters.sessionType;
-    }
-
-    // Fetch sessions with pagination
+    // Fetch sessions
     const sessions = await db
       .collection<Session>("sessions")
       .find(query)
       .sort({ startTime: -1 })
-      .limit(filters.limit)
-      .skip(filters.offset)
+      .limit(500) // Set a reasonable high limit for client-side filtering
       .toArray();
 
-    // Get total count
-    const totalCount = await db.collection("sessions").countDocuments(query);
-
-    // Calculate statistics
-    const stats = {
-      totalSessions: totalCount,
-      totalMinutes: Math.round(
-        sessions.reduce((acc, s) => acc + (s.duration || 0), 0) / 60
-      ),
-      averageFocus:
-        sessions.length > 0
-          ? Math.round(
-              sessions.reduce((acc, s) => acc + s.focusPercentage, 0) /
-                sessions.length
-            )
-          : 0,
-      completionRate:
-        sessions.length > 0
-          ? Math.round(
-              (sessions.filter((s) => s.isCompleted).length / sessions.length) *
-                100
-            )
-          : 0,
-    };
-
-    const response: SessionsResponse = {
+    // SIMPLIFIED RESPONSE: The HistoryInterface component does its own
+    // stats calculation and searching client-side.
+    return NextResponse.json({
       sessions: sessions.map((s) => ({
         ...s,
-        _id: s._id.toString() as any,
+        _id: s._id.toString(),
       })),
-      stats,
-      pagination: {
-        total: totalCount,
-        limit: filters.limit,
-        offset: filters.offset,
-        hasMore: filters.offset + filters.limit < totalCount,
-      },
-    };
-
-    return NextResponse.json(response);
+    });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Invalid filters", details: error.errors },
-        { status: 400 }
-      );
-    }
-
     console.error("Error fetching sessions:", error);
     return NextResponse.json(
       { error: "Failed to fetch sessions" },
@@ -164,8 +136,8 @@ export async function POST(request: NextRequest) {
 
     const db = await getDatabase();
 
-    const newSession: Session = {
-      _id: new ObjectId(),
+    // UPDATED: Added all fields from your interface
+    const newSession: any = {
       userId,
 
       // Time tracking
@@ -173,32 +145,44 @@ export async function POST(request: NextRequest) {
       endTime: null,
       duration: 0,
       targetDuration: validated.targetDuration * 60, // Convert to seconds
+      pausedDuration: 0, // ADDED: Default value
 
       // Focus metrics
       focusPercentage: 100,
       distractionCount: 0,
-      focusScore: 0,
+      focusScore: 0, // ADDED: Default value
 
       // Session configuration
       sessionType: validated.sessionType,
       isCompleted: false,
       cameraEnabled: validated.cameraEnabled,
-      goal: validated.goal,
+      goal: "", // Kept goal for compatibility, but using task
       tags: validated.tags,
+
+      // NEW FIELDS
+      task: validated.task || "", // ADDED: From schema
+      isArchived: false, // ADDED: Default value
+      timeline: [], // ADDED: Default value
 
       // Timestamps
       createdAt: new Date(),
       updatedAt: new Date(),
     };
 
-    await db.collection("sessions").insertOne(newSession);
+    const result = await db.collection("sessions").insertOne(newSession);
 
     // Update daily stats
     await updateDailyStats(db, userId, "session_started");
 
+    // Return the full session object with the insertedId
+    const createdSession = {
+      ...newSession,
+      _id: result.insertedId,
+    };
+
     return NextResponse.json(
       {
-        session: { ...newSession, _id: newSession._id.toString() },
+        session: { ...createdSession, _id: createdSession._id.toString() },
         message: "Session created successfully",
       },
       { status: 201 }

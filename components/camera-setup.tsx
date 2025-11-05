@@ -22,10 +22,14 @@ import {
   Info,
 } from "lucide-react";
 import {
-  initializeFaceDetection,
   requestCameraAccess,
-  analyzeFace,
-  stopCameraStream,
+  ensureFaceFocus,
+  startFaceFocus,
+  stopFaceFocus,
+  subscribeFaceFocus,
+  cleanupFaceDetection,
+  setFaceFocusOptions,
+  type FaceFocusSnapshot,
 } from "@/lib/face-detection";
 import { toast } from "sonner";
 
@@ -45,90 +49,124 @@ export function CameraSetup({ onSetupComplete }: CameraSetupProps) {
   const [testProgress, setTestProgress] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animationFrameRef = useRef<number>();
+  const unsubRef = useRef<null | (() => void)>(null);
+  const testingRef = useRef(false);
+
+  // Stop camera helper
+  const stopCameraStream = (stream: MediaStream | null) => {
+    stream?.getTracks().forEach((track) => track.stop());
+  };
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
+      if (unsubRef.current) {
+        unsubRef.current();
+        unsubRef.current = null;
       }
-      if (cameraStream) {
-        stopCameraStream(cameraStream);
-      }
+      try {
+        stopFaceFocus();
+      } catch {}
+      stopCameraStream(cameraStream);
+      cleanupFaceDetection().catch(() => {});
     };
-  }, [cameraStream]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Request camera permission
+  // Request camera + start a short detection test
   const handleRequestPermission = async () => {
     setIsLoading(true);
     setError(null);
 
     try {
-      // Initialize face detection model
-      const modelLoaded = await initializeFaceDetection();
-      if (!modelLoaded) {
-        throw new Error("Failed to load face detection model");
-      }
-
-      // Request camera access
+      // Request camera stream
       const stream = await requestCameraAccess();
       setCameraStream(stream);
 
-      // Set up video element
-      if (videoRef.current && stream) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-
-        toast.success("Camera enabled!");
-        setStep("testing");
-        startFaceDetection();
+      // Attach stream to video
+      const v = videoRef.current;
+      if (!v) throw new Error("Video element not available");
+      try {
+        (v as any).srcObject = stream;
+      } catch {
+        v.src = URL.createObjectURL(stream as any);
       }
+      v.muted = true;
+      v.playsInline = true;
+      await v.play();
+
+      // Init detector + start stream snapshots
+      await ensureFaceFocus(v);
+      // Optional: configure mirrored input and disable keypoints for this simple test
+      setFaceFocusOptions({ mirrored: true, includeKeypoints: false });
+      startFaceFocus({ includeKeypoints: false, mirrored: true });
+
+      // Begin test phase
+      setStep("testing");
+      runTest();
+      toast.success("Camera enabled!");
     } catch (err: any) {
-      setError(err.message);
-      toast.error(err.message);
+      const msg = err?.message || "Failed to enable camera";
+      setError(msg);
+      toast.error(msg);
+      stopCameraStream(cameraStream);
+      setCameraStream(null);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Start face detection loop
-  const startFaceDetection = async () => {
+  // Subscribe to snapshots, count a fixed number and finish
+  const runTest = () => {
+    testingRef.current = true;
     let detectionCount = 0;
-    const maxDetections = 50; // Test for ~5 seconds at 10fps
+    const maxDetections = 50; // ~50 frames
 
-    const detect = async () => {
-      if (videoRef.current && step === "testing") {
-        const result = await analyzeFace(videoRef.current);
+    if (unsubRef.current) {
+      unsubRef.current();
+      unsubRef.current = null;
+    }
 
-        setFaceDetected(result.faceDetected);
-        setIsLookingAtScreen(result.isLookingAtScreen);
+    unsubRef.current = subscribeFaceFocus((snap: FaceFocusSnapshot) => {
+      // Only proceed during testing step
+      if (!testingRef.current || step !== "testing") return;
 
-        // Update progress
-        detectionCount++;
-        setTestProgress((detectionCount / maxDetections) * 100);
+      setFaceDetected(snap.faceDetected);
+      setIsLookingAtScreen(snap.isLookingAtScreen);
 
-        // Complete after enough detections
-        if (detectionCount >= maxDetections) {
-          setStep("complete");
-          toast.success("Camera setup complete! 🎉");
-          return;
+      detectionCount += 1;
+      setTestProgress((detectionCount / maxDetections) * 100);
+
+      if (detectionCount >= maxDetections) {
+        // Stop testing, keep stream active until user clicks Start Focus
+        testingRef.current = false;
+        if (unsubRef.current) {
+          unsubRef.current();
+          unsubRef.current = null;
         }
-
-        // Continue detection
-        animationFrameRef.current = requestAnimationFrame(detect);
+        // We can stop detection to save resources; stream still plays
+        try {
+          stopFaceFocus();
+        } catch {}
+        setStep("complete");
+        toast.success("Camera setup complete! 🎉");
       }
-    };
-
-    detect();
+    });
   };
 
   // Complete setup
   const handleComplete = () => {
-    if (cameraStream) {
-      stopCameraStream(cameraStream);
+    // Cleanup detection and camera; then notify parent
+    if (unsubRef.current) {
+      unsubRef.current();
+      unsubRef.current = null;
     }
+    try {
+      stopFaceFocus();
+    } catch {}
+    stopCameraStream(cameraStream);
+    setCameraStream(null);
+    cleanupFaceDetection().catch(() => {});
     onSetupComplete?.();
   };
 
@@ -179,7 +217,6 @@ export function CameraSetup({ onSetupComplete }: CameraSetupProps) {
                 muted
                 className="w-full h-full object-cover"
               />
-              <canvas ref={canvasRef} className="absolute inset-0 hidden" />
 
               {/* Face Detection Overlay */}
               {step === "testing" && (
@@ -304,7 +341,18 @@ export function CameraSetup({ onSetupComplete }: CameraSetupProps) {
 
               {step === "testing" && (
                 <Button
-                  onClick={() => setStep("complete")}
+                  onClick={() => {
+                    // Stop test early
+                    testingRef.current = false;
+                    if (unsubRef.current) {
+                      unsubRef.current();
+                      unsubRef.current = null;
+                    }
+                    try {
+                      stopFaceFocus();
+                    } catch {}
+                    setStep("complete");
+                  }}
                   variant="outline"
                   className="flex-1"
                 >
@@ -318,7 +366,7 @@ export function CameraSetup({ onSetupComplete }: CameraSetupProps) {
                   className="flex-1 gap-2"
                   size="lg"
                 >
-                  <CheckCircle className="w-4 w-4" />
+                  <CheckCircle className="w-4 h-4" />
                   Start Focus Session
                 </Button>
               )}
