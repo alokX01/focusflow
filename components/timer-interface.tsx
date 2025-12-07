@@ -233,6 +233,7 @@ export function TimerInterface({
     null
   );
   const initInProgressRef = useRef(false);
+  const lastFocusedRef = useRef(false); // NEW: last known focus state
 
   // Load recent tasks
   useEffect(() => {
@@ -250,10 +251,11 @@ export function TimerInterface({
     }
   }, [settings.desktopNotifications]);
 
-  // Timer tick
+  // Timer tick (now also accumulates focused time)
   useEffect(() => {
     if (isRunning && !isPaused) {
       timerIntervalRef.current = setInterval(() => {
+        // countdown
         setTimeLeft((prev) => {
           if (prev <= 1) {
             handleSessionComplete();
@@ -261,6 +263,15 @@ export function TimerInterface({
           }
           return prev - 1;
         });
+
+        // accumulate focused time based on last known focus state
+        if (
+          sessionType === "focus" &&
+          settings.cameraEnabled &&
+          lastFocusedRef.current
+        ) {
+          setFocusedTimeSec((prev) => prev + 1);
+        }
       }, 1000);
     }
     return () => {
@@ -272,12 +283,12 @@ export function TimerInterface({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRunning, isPaused]);
 
-  // Attach stream to visible preview when toggled ON
   useEffect(() => {
     if (
       settings.previewEnabled &&
       streamRef.current &&
-      visibleVideoRef.current
+      visibleVideoRef.current &&
+      cameraReady
     ) {
       try {
         (visibleVideoRef.current as any).srcObject = streamRef.current;
@@ -288,7 +299,7 @@ export function TimerInterface({
       }
       visibleVideoRef.current!.play().catch(() => {});
     }
-  }, [settings.previewEnabled]);
+  }, [settings.previewEnabled, cameraReady]);
 
   // Keep detector options updated
   useEffect(() => {
@@ -329,7 +340,6 @@ export function TimerInterface({
         ? "rgba(34,197,94,0.9)"
         : "rgba(239,68,68,0.9)";
       for (const kp of snap.keypoints) {
-        // preview is mirrored with CSS when mirrorVideo=true, so we don't flip x here — we also mirror canvas with CSS
         const x = kp.x * sx;
         const y = kp.y * sy;
         ctx.beginPath();
@@ -371,8 +381,10 @@ export function TimerInterface({
           const delta = focusedNow ? gain * dt : -loss * dt;
           return Math.max(0, Math.min(100, prev + delta));
         });
-        if (focusedNow) setFocusedTimeSec((prev) => prev + dt);
       }
+
+      // NEW: track last known focus state
+      lastFocusedRef.current = focusedNow;
 
       // Distraction detection (throttle)
       if (!focusedNow && sessionType === "focus") {
@@ -568,6 +580,7 @@ export function TimerInterface({
     setFocusPercentage(100);
     setDistractionCount(0);
     setFocusedTimeSec(0);
+    lastFocusedRef.current = false;
 
     // Save recent task
     if (data.task && data.task.trim()) {
@@ -634,12 +647,19 @@ export function TimerInterface({
     toast.info("▶️ Session resumed");
   };
 
-  const handleStop = async () => {
-    const wasCompleted = timeLeft === 0;
+  // STOP HANDLER – now accepts { completed?: boolean }
+  const handleStop = async (options?: { completed?: boolean }) => {
+    const forcedCompleted = options?.completed ?? false;
+    const wasCompleted = forcedCompleted || timeLeft === 0;
+
+    const durationSec = wasCompleted
+      ? targetDuration
+      : targetDuration - timeLeft;
 
     setIsRunning(false);
     setIsPaused(false);
     setPauseReason(null);
+    lastFocusedRef.current = false;
 
     // Stop detection
     stopFaceFocus();
@@ -668,7 +688,7 @@ export function TimerInterface({
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            duration: targetDuration - timeLeft,
+            duration: durationSec,
             focusedTime: Math.round(focusedTimeSec),
             focusPercentage,
             distractionCount,
@@ -686,7 +706,7 @@ export function TimerInterface({
       fetchAIInsights({
         focusPercentage,
         distractionCount,
-        duration: targetDuration - timeLeft,
+        duration: durationSec,
         wasCompleted: true,
       });
       setIsAIModalOpen(true);
@@ -729,7 +749,8 @@ export function TimerInterface({
       `You completed a ${sessionType} session!`,
       settings.desktopNotifications
     );
-    handleStop();
+    // Mark as completed so history/analytics see it
+    handleStop({ completed: true });
     onSessionComplete?.();
   };
 
@@ -767,7 +788,10 @@ export function TimerInterface({
       .padStart(2, "0")}`;
   };
 
-  const progress = ((targetDuration - timeLeft) / targetDuration) * 100;
+  const progress =
+    targetDuration > 0
+      ? ((targetDuration - timeLeft) / targetDuration) * 100
+      : 0;
 
   const getSessionStyle = () => {
     switch (sessionType) {
@@ -808,8 +832,8 @@ export function TimerInterface({
       </div>
 
       <div className="max-w-5xl mx-auto space-y-6">
-        {/* Camera Preview */}
-        {/* <AnimatePresence mode="wait">
+        {/* Camera Preview (re-enabled) */}
+        <AnimatePresence mode="wait">
           {isRunning &&
             sessionType === "focus" &&
             settings.cameraEnabled &&
@@ -820,7 +844,7 @@ export function TimerInterface({
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: "auto" }}
                 exit={{ opacity: 0, height: 0 }}
-                className="relative mx-auto rounded-lg overflow-hidden border"
+                className="relative mx-auto overflow-hidden rounded-lg border"
                 style={{ maxWidth: 640 }}
               >
                 <video
@@ -837,13 +861,13 @@ export function TimerInterface({
                   <canvas
                     ref={overlayRef}
                     className={cn(
-                      "absolute top-0 left-0 w-full h-full pointer-events-none",
+                      "pointer-events-none absolute inset-0 h-full w-full",
                       settings.mirrorVideo && "transform -scale-x-100"
                     )}
                   />
                 )}
 
-                <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
+                <div className="absolute left-3 right-3 top-3 flex items-center justify-between">
                   <Badge
                     variant={
                       faceDetected && isLookingAtScreen
@@ -855,16 +879,16 @@ export function TimerInterface({
                     {faceDetected ? (
                       isLookingAtScreen ? (
                         <>
-                          <Eye className="w-3 h-3" /> Focused
+                          <Eye className="h-3 w-3" /> Focused
                         </>
                       ) : (
                         <>
-                          <EyeOff className="w-3 h-3" /> Looking Away
+                          <EyeOff className="h-3 w-3" /> Looking Away
                         </>
                       )
                     ) : (
                       <>
-                        <AlertTriangle className="w-3 h-3" /> No Face
+                        <AlertTriangle className="h-3 w-3" /> No Face
                       </>
                     )}
                   </Badge>
@@ -874,7 +898,7 @@ export function TimerInterface({
                 </div>
               </motion.div>
             )}
-        </AnimatePresence> */}
+        </AnimatePresence>
 
         {/* Status Card */}
         {isRunning && (
@@ -884,16 +908,16 @@ export function TimerInterface({
           >
             <Card className={cn("transition-colors", sessionStyle.border)}>
               <CardContent className="p-4">
-                <div className="flex items-center justify-between flex-wrap gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     <div
                       className={cn(
-                        "w-10 h-10 rounded-full flex items-center justify-center",
+                        "flex h-10 w-10 items-center justify-center rounded-full",
                         sessionStyle.bg
                       )}
                     >
                       <SessionIcon
-                        className={cn("w-5 h-5", sessionStyle.color)}
+                        className={cn("h-5 w-5", sessionStyle.color)}
                       />
                     </div>
                     <div>
@@ -910,19 +934,19 @@ export function TimerInterface({
                     {sessionType === "focus" && (
                       <div className="flex items-center gap-4 text-sm">
                         <div className="flex items-center gap-1.5">
-                          <Sparkles className="w-4 h-4 text-primary" />
+                          <Sparkles className="h-4 w-4 text-primary" />
                           <span className="font-medium">
                             {Math.round(focusPercentage)}%
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <AlertTriangle className="w-4 h-4 text-amber-500" />
+                          <AlertTriangle className="h-4 w-4 text-amber-500" />
                           <span className="font-medium">
                             {distractionCount}
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <Clock className="w-4 h-4 text-green-500" />
+                          <Clock className="h-4 w-4 text-green-500" />
                           <span className="font-medium">
                             {formatTime(focusedTimeSec)}
                           </span>
@@ -937,7 +961,7 @@ export function TimerInterface({
                         onClick={handleShowInsights}
                         className="gap-2"
                       >
-                        <Brain className="w-4 h-4" /> AI Insights
+                        <Brain className="h-4 w-4" /> AI Insights
                       </Button>
                     )}
 
@@ -957,7 +981,7 @@ export function TimerInterface({
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="text-center space-y-8"
+          className="space-y-8 text-center"
         >
           {/* Pomodoro Progress */}
           {pomodoroCount > 0 && (
@@ -966,7 +990,7 @@ export function TimerInterface({
                 <div
                   key={i}
                   className={cn(
-                    "w-3 h-3 rounded-full transition-colors",
+                    "h-3 w-3 rounded-full transition-colors",
                     i < pomodoroCount % 4
                       ? "bg-primary"
                       : "bg-muted-foreground/20"
@@ -983,7 +1007,7 @@ export function TimerInterface({
           <div className="relative inline-block">
             <div
               className={cn(
-                "w-80 h-80 mx-auto rounded-full border-8 flex items-center justify-center shadow-2xl transition-colors",
+                "mx-auto flex h-80 w-80 items-center justify-center rounded-full border-8 shadow-2xl transition-colors",
                 sessionStyle.bg,
                 sessionStyle.border
               )}
@@ -991,7 +1015,7 @@ export function TimerInterface({
               <div className="text-center">
                 <motion.div
                   className={cn(
-                    "text-7xl font-mono font-bold",
+                    "font-mono text-7xl font-bold",
                     sessionStyle.color
                   )}
                   animate={{ scale: isRunning && !isPaused ? [1, 1.02, 1] : 1 }}
@@ -1002,7 +1026,7 @@ export function TimerInterface({
                 >
                   {formatTime(timeLeft)}
                 </motion.div>
-                <div className="text-sm text-muted-foreground uppercase tracking-wider mt-2">
+                <div className="mt-2 text-sm uppercase tracking-wider text-muted-foreground">
                   {isRunning
                     ? isPaused
                       ? "Paused"
@@ -1013,7 +1037,7 @@ export function TimerInterface({
             </div>
 
             <svg
-              className="absolute inset-0 w-80 h-80 mx-auto -rotate-90 pointer-events-none"
+              className="pointer-events-none absolute inset-0 mx-auto h-80 w-80 -rotate-90"
               viewBox="0 0 100 100"
             >
               <circle
@@ -1051,7 +1075,7 @@ export function TimerInterface({
                 size="lg"
                 className="gap-2 px-8"
               >
-                <Play className="w-5 h-5" /> Start Session
+                <Play className="h-5 w-5" /> Start Session
               </Button>
             ) : (
               <>
@@ -1063,21 +1087,21 @@ export function TimerInterface({
                 >
                   {isPaused ? (
                     <>
-                      <Play className="w-5 h-5" /> Resume
+                      <Play className="h-5 w-5" /> Resume
                     </>
                   ) : (
                     <>
-                      <Pause className="w-5 h-5" /> Pause
+                      <Pause className="h-5 w-5" /> Pause
                     </>
                   )}
                 </Button>
                 <Button
-                  onClick={handleStop}
+                  onClick={() => handleStop()}
                   variant="destructive"
                   size="lg"
                   className="gap-2"
                 >
-                  <Square className="w-5 h-5" /> End Session
+                  <Square className="h-5 w-5" /> End Session
                 </Button>
               </>
             )}
@@ -1089,7 +1113,7 @@ export function TimerInterface({
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="grid grid-cols-1 md:grid-cols-3 gap-4"
+            className="grid grid-cols-1 gap-4 md:grid-cols-3"
           >
             <StatCard
               label="Focus Score"
@@ -1120,7 +1144,7 @@ export function TimerInterface({
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Target className="w-5 h-5" /> Start New Session
+              <Target className="h-5 w-5" /> Start New Session
             </DialogTitle>
             <DialogDescription>
               Choose your session type and optionally add a task
@@ -1140,19 +1164,19 @@ export function TimerInterface({
                 <SelectContent>
                   <SelectItem value="focus">
                     <div className="flex items-center gap-2">
-                      <Target className="w-4 h-4" /> Focus (
+                      <Target className="h-4 w-4" /> Focus (
                       {settings.focusDuration} min)
                     </div>
                   </SelectItem>
                   <SelectItem value="shortBreak">
                     <div className="flex items-center gap-2">
-                      <Coffee className="w-4 h-4" /> Short Break (
+                      <Coffee className="h-4 w-4" /> Short Break (
                       {settings.shortBreakDuration} min)
                     </div>
                   </SelectItem>
                   <SelectItem value="longBreak">
                     <div className="flex items-center gap-2">
-                      <Coffee className="w-4 h-4" /> Long Break (
+                      <Coffee className="h-4 w-4" /> Long Break (
                       {settings.longBreakDuration} min)
                     </div>
                   </SelectItem>
@@ -1173,8 +1197,8 @@ export function TimerInterface({
 
             {recentTasks.length > 0 && (
               <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground flex items-center gap-1">
-                  <History className="w-3 h-3" /> Recent Tasks
+                <Label className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <History className="h-3 w-3" /> Recent Tasks
                 </Label>
                 <div className="flex flex-wrap gap-2">
                   {recentTasks.map((task, i) => (
@@ -1192,8 +1216,8 @@ export function TimerInterface({
             )}
 
             {modalSessionType === "focus" && !settings.cameraEnabled && (
-              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 p-3">
+                <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
                 <div className="flex-1">
                   <p className="text-sm text-amber-600 dark:text-amber-400">
                     Camera tracking is disabled in settings
@@ -1215,7 +1239,7 @@ export function TimerInterface({
                 })
               }
             >
-              <Play className="w-4 h-4 mr-2" /> Start Session
+              <Play className="mr-2 h-4 w-4" /> Start Session
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1227,14 +1251,14 @@ export function TimerInterface({
           <DialogHeader>
             <div className="flex items-center justify-between">
               <DialogTitle className="flex items-center gap-2">
-                <Brain className="w-5 h-5 text-primary" /> AI Session Insights
+                <Brain className="h-5 w-5 text-primary" /> AI Session Insights
               </DialogTitle>
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={() => setIsAIModalOpen(false)}
               >
-                <X className="w-4 h-4" />
+                <X className="h-4 w-4" />
               </Button>
             </div>
             <DialogDescription>
@@ -1243,39 +1267,39 @@ export function TimerInterface({
           </DialogHeader>
 
           {isGeneratingInsight ? (
-            <div className="py-12 flex flex-col items-center justify-center">
-              <Brain className="w-12 h-12 text-primary animate-pulse mb-4" />
+            <div className="flex flex-col items-center justify-center py-12">
+              <Brain className="mb-4 h-12 w-12 animate-pulse text-primary" />
               <p className="text-muted-foreground">Analyzing your session...</p>
             </div>
           ) : aiInsight ? (
             <div className="space-y-6 py-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
                     <span className="text-2xl font-bold text-primary">
                       {aiInsight.score}
                     </span>
                   </div>
                   <div>
-                    <p className="font-semibold text-lg">{aiInsight.summary}</p>
+                    <p className="text-lg font-semibold">{aiInsight.summary}</p>
                     <Badge variant="secondary">{aiInsight.badge}</Badge>
                   </div>
                 </div>
-                <Award className="w-8 h-8 text-amber-500" />
+                <Award className="h-8 w-8 text-amber-500" />
               </div>
 
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4 text-primary" />
+                  <TrendingUp className="h-4 w-4 text-primary" />
                   <h4 className="font-semibold">Key Insights</h4>
                 </div>
                 <ul className="space-y-2">
                   {aiInsight.insights.map((ins: string, i: number) => (
                     <li
                       key={i}
-                      className="text-sm text-muted-foreground flex gap-2"
+                      className="flex gap-2 text-sm text-muted-foreground"
                     >
-                      <span className="text-primary mt-1">•</span>
+                      <span className="mt-1 text-primary">•</span>
                       <span>{ins}</span>
                     </li>
                   ))}
@@ -1285,16 +1309,16 @@ export function TimerInterface({
               {aiInsight.tips?.length > 0 && (
                 <div className="space-y-3">
                   <div className="flex items-center gap-2">
-                    <Lightbulb className="w-4 h-4 text-amber-500" />
+                    <Lightbulb className="h-4 w-4 text-amber-500" />
                     <h4 className="font-semibold">Actionable Tips</h4>
                   </div>
                   <ul className="space-y-2">
                     {aiInsight.tips.map((tip: string, i: number) => (
                       <li
                         key={i}
-                        className="text-sm bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 flex gap-2"
+                        className="flex gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-sm"
                       >
-                        <Sparkles className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                        <Sparkles className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
                         <span>{tip}</span>
                       </li>
                     ))}
@@ -1335,11 +1359,11 @@ function StatCard({
   return (
     <Card>
       <CardContent className="p-6">
-        <div className="flex items-center justify-between mb-3">
-          <Icon className={cn("w-5 h-5", color)} />
+        <div className="mb-3 flex items-center justify-between">
+          <Icon className={cn("h-5 w-5", color)} />
           <div className={cn("text-3xl font-bold", color)}>{value}</div>
         </div>
-        <div className="text-sm text-muted-foreground mb-2">{label}</div>
+        <div className="mb-2 text-sm text-muted-foreground">{label}</div>
         {showProgress && typeof progressValue === "number" && (
           <Progress value={progressValue} className="h-1.5" />
         )}

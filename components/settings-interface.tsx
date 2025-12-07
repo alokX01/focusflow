@@ -43,7 +43,7 @@ export function SettingsInterface() {
   const [hasChanges, setHasChanges] = useState(false);
   const [localSettings, setLocalSettings] = useState<Settings>(settings);
 
-  // Update local settings when global settings change
+  // Sync local copy when global settings change
   useEffect(() => {
     setLocalSettings(settings);
     setHasChanges(false);
@@ -62,7 +62,7 @@ export function SettingsInterface() {
     try {
       await updateSettings(localSettings);
       setHasChanges(false);
-      toast.success("Settings saved successfully!");
+      toast.success("Settings saved.");
     } catch (error) {
       toast.error("Failed to save settings");
       console.error(error);
@@ -72,15 +72,20 @@ export function SettingsInterface() {
   };
 
   const handleReset = async () => {
-    if (confirm("Are you sure you want to reset all settings to defaults?")) {
-      try {
-        await resetSettings();
-        setHasChanges(false);
-        toast.success("Settings reset to defaults");
-      } catch (error) {
-        toast.error("Failed to reset settings");
-        console.error(error);
-      }
+    if (
+      !confirm(
+        "Reset all settings to default values? This won't affect your past sessions."
+      )
+    ) {
+      return;
+    }
+    try {
+      await resetSettings();
+      setHasChanges(false);
+      toast.success("Settings reset to defaults.");
+    } catch (error) {
+      toast.error("Failed to reset settings");
+      console.error(error);
     }
   };
 
@@ -102,9 +107,10 @@ export function SettingsInterface() {
                 <Timer className="w-5 h-5 text-primary" />
               </div>
               <div>
-                <CardTitle>Timer Settings</CardTitle>
+                <CardTitle>Focus & breaks</CardTitle>
                 <CardDescription>
-                  Configure your Pomodoro timer preferences
+                  Choose how long you focus and how often you earn longer
+                  breaks.
                 </CardDescription>
               </div>
             </div>
@@ -112,7 +118,7 @@ export function SettingsInterface() {
           <CardContent className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <SliderSetting
-                label="Pomodoro Length"
+                label="Focus block"
                 value={localSettings.focusDuration}
                 onChange={(v) => handleChange("focusDuration", v)}
                 min={15}
@@ -121,7 +127,7 @@ export function SettingsInterface() {
                 unit="minutes"
               />
               <SliderSetting
-                label="Short Break"
+                label="Short break"
                 value={localSettings.shortBreakDuration}
                 onChange={(v) => handleChange("shortBreakDuration", v)}
                 min={3}
@@ -130,7 +136,7 @@ export function SettingsInterface() {
                 unit="minutes"
               />
               <SliderSetting
-                label="Long Break"
+                label="Long break"
                 value={localSettings.longBreakDuration}
                 onChange={(v) => handleChange("longBreakDuration", v)}
                 min={10}
@@ -140,16 +146,30 @@ export function SettingsInterface() {
               />
             </div>
 
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <NumberSetting
+                label="Focus blocks before long break"
+                description="How many focus sessions you complete before taking a longer reset."
+                value={localSettings.pomodorosBeforeLongBreak}
+                min={1}
+                max={8}
+                step={1}
+                onChange={(num) =>
+                  handleChange("pomodorosBeforeLongBreak", num)
+                }
+              />
+            </div>
+
             <div className="space-y-4">
               <SwitchSetting
                 label="Auto-start breaks"
-                description="Automatically start break timers"
+                description="When a focus block ends, start the break timer automatically."
                 checked={localSettings.autoStartBreaks}
                 onChange={(v) => handleChange("autoStartBreaks", v)}
               />
               <SwitchSetting
-                label="Auto-start pomodoros"
-                description="Automatically start work sessions after breaks"
+                label="Auto-start focus blocks"
+                description="When a break ends, automatically start the next focus block."
                 checked={localSettings.autoStartPomodoros}
                 onChange={(v) => handleChange("autoStartPomodoros", v)}
               />
@@ -158,7 +178,7 @@ export function SettingsInterface() {
         </Card>
       </motion.div>
 
-      {/* Focus Detection (extended with camera preview/overlay/mirror + focus scoring) */}
+      {/* Focus Detection */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -171,9 +191,9 @@ export function SettingsInterface() {
                 <Eye className="w-5 h-5 text-green-500" />
               </div>
               <div>
-                <CardTitle>Focus Detection</CardTitle>
+                <CardTitle>Focus detection</CardTitle>
                 <CardDescription>
-                  Configure camera-based attention tracking
+                  Let the camera nudge you when your attention drifts.
                 </CardDescription>
               </div>
             </div>
@@ -184,7 +204,7 @@ export function SettingsInterface() {
               <div>
                 <p className="text-sm font-medium">Enable camera tracking</p>
                 <p className="text-xs text-muted-foreground">
-                  Use camera to monitor focus levels
+                  Use your camera to estimate focus levels during work blocks.
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -206,19 +226,19 @@ export function SettingsInterface() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <SwitchSetting
                 label="Show video preview"
-                description="Display live camera preview during focus sessions"
+                description="Display your camera feed while a focus session is running."
                 checked={!!localSettings.previewEnabled}
                 onChange={(v) => handleChange("previewEnabled", v)}
               />
               <SwitchSetting
-                label="Show overlay (landmarks)"
-                description="Render face landmarks on the preview"
+                label="Show overlay"
+                description="Draw landmarks on the preview so you can see what the model sees."
                 checked={!!localSettings.overlayEnabled}
                 onChange={(v) => handleChange("overlayEnabled", v)}
               />
               <SwitchSetting
                 label="Mirror video"
-                description="Flip preview horizontally (front camera style)"
+                description="Flip the preview horizontally (like a front-facing camera)."
                 checked={!!localSettings.mirrorVideo}
                 onChange={(v) => handleChange("mirrorVideo", v)}
               />
@@ -227,7 +247,7 @@ export function SettingsInterface() {
             {/* Distraction threshold + Pause on distraction */}
             <SliderSetting
               label="Distraction threshold"
-              description="How long you can look away before being marked as distracted"
+              description="How long you can look away before we count it as a distraction."
               value={localSettings.distractionThreshold}
               onChange={(v) => handleChange("distractionThreshold", v)}
               min={1}
@@ -237,51 +257,56 @@ export function SettingsInterface() {
             />
             <SwitchSetting
               label="Pause timer on distraction"
-              description="Automatically pause when you look away"
+              description="Automatically pause the timer when you look away for too long."
               checked={localSettings.pauseOnDistraction}
               onChange={(v) => handleChange("pauseOnDistraction", v)}
             />
 
             {/* Focus scoring knobs */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-              <SliderSetting
-                label="Min focus confidence"
-                description="Confidence threshold to count as focused"
-                value={localSettings.minFocusConfidence}
-                onChange={(v) => handleChange("minFocusConfidence", v)}
-                min={0}
-                max={100}
-                step={1}
-                unit=""
-              />
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <NumberSetting
-                  label="Gain when focused"
-                  description="% per second"
-                  value={Number(localSettings.focusGainPerSec ?? 1.2)}
+            <div className="space-y-3 pt-2">
+              <p className="text-xs font-medium text-muted-foreground">
+                Advanced tracking tuning
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <SliderSetting
+                  label="Minimum focus confidence"
+                  description="Confidence threshold required to count as focused."
+                  value={localSettings.minFocusConfidence}
+                  onChange={(v) => handleChange("minFocusConfidence", v)}
                   min={0}
-                  max={10}
-                  step={0.1}
-                  onChange={(num) => handleChange("focusGainPerSec", num)}
+                  max={100}
+                  step={1}
+                  unit=""
                 />
-                <NumberSetting
-                  label="Loss when away"
-                  description="% per second"
-                  value={Number(localSettings.defocusLossPerSec ?? 4.0)}
-                  min={0}
-                  max={20}
-                  step={0.1}
-                  onChange={(num) => handleChange("defocusLossPerSec", num)}
-                />
-                <NumberSetting
-                  label="Loss when no face"
-                  description="% per second"
-                  value={Number(localSettings.noFaceLossPerSec ?? 6.0)}
-                  min={0}
-                  max={30}
-                  step={0.1}
-                  onChange={(num) => handleChange("noFaceLossPerSec", num)}
-                />
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <NumberSetting
+                    label="Gain when focused"
+                    description="% per second"
+                    value={Number(localSettings.focusGainPerSec ?? 1.2)}
+                    min={0}
+                    max={10}
+                    step={0.1}
+                    onChange={(num) => handleChange("focusGainPerSec", num)}
+                  />
+                  <NumberSetting
+                    label="Loss when looking away"
+                    description="% per second"
+                    value={Number(localSettings.defocusLossPerSec ?? 4.0)}
+                    min={0}
+                    max={20}
+                    step={0.1}
+                    onChange={(num) => handleChange("defocusLossPerSec", num)}
+                  />
+                  <NumberSetting
+                    label="Loss when no face"
+                    description="% per second"
+                    value={Number(localSettings.noFaceLossPerSec ?? 6.0)}
+                    min={0}
+                    max={30}
+                    step={0.1}
+                    onChange={(num) => handleChange("noFaceLossPerSec", num)}
+                  />
+                </div>
               </div>
             </div>
           </CardContent>
@@ -301,9 +326,9 @@ export function SettingsInterface() {
                 <Bell className="w-5 h-5 text-amber-500" />
               </div>
               <div>
-                <CardTitle>Notifications & Sounds</CardTitle>
+                <CardTitle>Notifications & sound</CardTitle>
                 <CardDescription>
-                  Manage alerts and audio feedback
+                  Decide how loudly the app should talk to you.
                 </CardDescription>
               </div>
             </div>
@@ -311,25 +336,25 @@ export function SettingsInterface() {
           <CardContent className="space-y-4">
             <SwitchSetting
               label="Sound notifications"
-              description="Play sounds for timer events"
+              description="Play short sounds when sessions start, pause, or complete."
               checked={localSettings.soundEnabled}
               onChange={(v) => handleChange("soundEnabled", v)}
             />
             <SwitchSetting
               label="Desktop notifications"
-              description="Show system notifications"
+              description="Show system notifications when a session finishes."
               checked={localSettings.desktopNotifications}
               onChange={(v) => handleChange("desktopNotifications", v)}
             />
             <SwitchSetting
               label="Break reminders"
-              description="Remind you to take breaks"
+              description="Remind you to take breaks if you work for a long stretch."
               checked={localSettings.breakReminders}
               onChange={(v) => handleChange("breakReminders", v)}
             />
             <SwitchSetting
               label="Eye strain reminders"
-              description="Suggest eye rest during long sessions"
+              description="Suggest quick eye rests during longer focus periods."
               checked={localSettings.eyeStrainReminders}
               onChange={(v) => handleChange("eyeStrainReminders", v)}
             />
@@ -350,9 +375,9 @@ export function SettingsInterface() {
                 <Shield className="w-5 h-5 text-blue-500" />
               </div>
               <div>
-                <CardTitle>Privacy & Data</CardTitle>
+                <CardTitle>Privacy & data</CardTitle>
                 <CardDescription>
-                  Control your data and privacy settings
+                  How your focus data is handled and stored.
                 </CardDescription>
               </div>
             </div>
@@ -362,11 +387,17 @@ export function SettingsInterface() {
               <div>
                 <p className="text-sm font-medium">Local processing only</p>
                 <p className="text-xs text-muted-foreground">
-                  All camera analysis happens on your device
+                  Camera analysis happens on your device. Video is not sent to
+                  our servers.
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <Badge variant="default" className="bg-green-500">
+                <Badge
+                  variant={
+                    localSettings.localProcessing ? "default" : "outline"
+                  }
+                  className="bg-green-500 text-white"
+                >
                   Enabled
                 </Badge>
                 <Switch checked disabled />
@@ -376,7 +407,7 @@ export function SettingsInterface() {
             <div className="space-y-2">
               <label className="text-sm font-medium">Data retention</label>
               <p className="text-xs text-muted-foreground mb-2">
-                How long to keep your session data
+                How long to keep your session history.
               </p>
               <Select
                 value={localSettings.dataRetention.toString()}
@@ -397,8 +428,8 @@ export function SettingsInterface() {
             </div>
 
             <SwitchSetting
-              label="Anonymous analytics"
-              description="Help improve FocusFlow with usage data"
+              label="Anonymous usage analytics"
+              description="Share anonymized usage patterns to help improve FocusFlow."
               checked={localSettings.analyticsSharing}
               onChange={(v) => handleChange("analyticsSharing", v)}
             />
@@ -420,7 +451,7 @@ export function SettingsInterface() {
               </div>
               <div>
                 <CardTitle>Appearance</CardTitle>
-                <CardDescription>Customize the look and feel</CardDescription>
+                <CardDescription>Adjust theme and motion.</CardDescription>
               </div>
             </div>
           </CardHeader>
@@ -446,7 +477,7 @@ export function SettingsInterface() {
 
             <SwitchSetting
               label="Reduced motion"
-              description="Minimize animations and transitions"
+              description="Minimize animations for a calmer experience."
               checked={localSettings.reducedMotion}
               onChange={(v) => handleChange("reducedMotion", v)}
             />
@@ -464,7 +495,7 @@ export function SettingsInterface() {
         <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
           <Button variant="outline" onClick={handleReset} className="gap-2">
             <RotateCcw className="w-4 h-4" />
-            Reset to Defaults
+            Reset to defaults
           </Button>
 
           <Button
@@ -475,12 +506,12 @@ export function SettingsInterface() {
             {isSaving ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Saving...
+                Saving…
               </>
             ) : (
               <>
                 <Save className="w-4 h-4" />
-                Save Settings
+                Save settings
               </>
             )}
           </Button>
@@ -545,8 +576,8 @@ function SwitchSetting({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between">
-      <div>
+    <div className="flex items-center justify-between gap-4">
+      <div className="flex-1">
         <p className="text-sm font-medium">{label}</p>
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>

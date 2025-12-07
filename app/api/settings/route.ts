@@ -19,10 +19,22 @@ const SettingsSchema = z.object({
   autoStartBreaks: z.boolean().optional(),
   autoStartPomodoros: z.boolean().optional(),
 
+  // Pomodoro rhythm
+  pomodorosBeforeLongBreak: z.number().min(1).max(12).optional(),
+
   // Focus Detection
   cameraEnabled: z.boolean().optional(),
   distractionThreshold: z.number().min(1).max(10).optional(),
   pauseOnDistraction: z.boolean().optional(),
+
+  previewEnabled: z.boolean().optional(),
+  overlayEnabled: z.boolean().optional(),
+  mirrorVideo: z.boolean().optional(),
+
+  minFocusConfidence: z.number().min(0).max(100).optional(),
+  focusGainPerSec: z.number().min(0).max(20).optional(),
+  defocusLossPerSec: z.number().min(0).max(40).optional(),
+  noFaceLossPerSec: z.number().min(0).max(40).optional(),
 
   // Notifications
   soundEnabled: z.boolean().optional(),
@@ -146,23 +158,44 @@ export async function DELETE(request: NextRequest) {
     // Create default settings
     const defaultSettings = {
       userId,
+      // Timer
       focusDuration: 25,
       shortBreakDuration: 5,
       longBreakDuration: 15,
       autoStartBreaks: false,
       autoStartPomodoros: false,
+
+      // Focus Detection
       cameraEnabled: false,
       distractionThreshold: 3,
       pauseOnDistraction: true,
+
+      previewEnabled: true,
+      overlayEnabled: true,
+      mirrorVideo: true,
+      minFocusConfidence: 35,
+      focusGainPerSec: 1.2,
+      defocusLossPerSec: 4.0,
+      noFaceLossPerSec: 6.0,
+
+      // Notifications
       soundEnabled: true,
       desktopNotifications: true,
       breakReminders: true,
       eyeStrainReminders: true,
+
+      // Privacy
       dataRetention: 30,
       localProcessing: true,
       analyticsSharing: false,
+
+      // Appearance
       theme: "system",
       reducedMotion: false,
+
+      // Pomodoro rhythm
+      pomodorosBeforeLongBreak: 4,
+
       createdAt: new Date(),
       updatedAt: new Date(),
     };

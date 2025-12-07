@@ -20,7 +20,7 @@ export interface Settings {
   overlayEnabled: boolean; // draw landmarks overlay
   mirrorVideo: boolean; // mirror preview + detector input
 
-  // NEW focus integrator tuning
+  // Focus integrator tuning
   minFocusConfidence: number; // 0..100 (confidence gate)
   focusGainPerSec: number; // +%/sec when focused
   defocusLossPerSec: number; // -%/sec when looking away (face present)
@@ -35,10 +35,14 @@ export interface Settings {
   // Privacy
   dataRetention: number;
   analyticsSharing: boolean;
+  localProcessing: boolean; // explicit flag to match backend
 
   // Appearance
   theme: "light" | "dark" | "system";
   reducedMotion: boolean;
+
+  // Pomodoro rhythm
+  pomodorosBeforeLongBreak: number; // e.g. 4 focus blocks before long break
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -47,17 +51,23 @@ const DEFAULT_SETTINGS: Settings = {
   longBreakDuration: 15,
   autoStartBreaks: false,
   autoStartPomodoros: false,
+
   cameraEnabled: true,
   distractionThreshold: 3,
   pauseOnDistraction: true,
+
   soundEnabled: true,
   desktopNotifications: true,
   breakReminders: true,
   eyeStrainReminders: true,
+
   dataRetention: 30,
   analyticsSharing: false,
+  localProcessing: true,
+
   theme: "system",
   reducedMotion: false,
+
   previewEnabled: true,
   overlayEnabled: true,
   mirrorVideo: true,
@@ -65,6 +75,8 @@ const DEFAULT_SETTINGS: Settings = {
   focusGainPerSec: 1.2,
   defocusLossPerSec: 4.0,
   noFaceLossPerSec: 6.0,
+
+  pomodorosBeforeLongBreak: 4,
 };
 
 export function useSettings() {
