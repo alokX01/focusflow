@@ -1,3 +1,4 @@
+// hooks/use-analytics.ts
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
@@ -22,6 +23,7 @@ interface AnalyticsData {
   bestDays?: any[];
   insights?: string[];
   bestSessionMinutes?: number;
+  recentSessionTimeline?: any[];
 }
 
 export function useAnalytics(period: "week" | "month" | "year" = "week") {

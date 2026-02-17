@@ -1,43 +1,32 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { getServerSession } from "next-auth/next";
-import { getDatabase } from "@/lib/mongodb";
 import { authOptions } from "@/lib/auth";
+import { getDatabase } from "@/lib/mongodb";
 import { apiResponse, apiError, handleApiError } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
-// ============================================
-// GET - Get User Statistics
-// ============================================
-
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-
-    if (!session?.user) {
-      return apiError("Unauthorized", 401);
-    }
+    if (!session?.user) return apiError("Unauthorized", 401);
 
     const userId = (session.user as any).id || session.user.email;
     const db = await getDatabase();
 
-    // Calculate date ranges
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
-
     const weekAgo = new Date(today);
     weekAgo.setDate(weekAgo.getDate() - 7);
 
-    // Aggregate statistics
     const pipeline = [
-      { $match: { userId, isCompleted: true } },
+      { $match: { userId, isCompleted: true, isArchived: { $ne: true } } },
       {
         $facet: {
-          // Today's stats
           today: [
-            { $match: { createdAt: { $gte: today, $lt: tomorrow } } },
+            { $match: { startTime: { $gte: today, $lt: tomorrow } } },
             {
               $group: {
                 _id: null,
@@ -47,10 +36,8 @@ export async function GET(request: NextRequest) {
               },
             },
           ],
-
-          // Weekly stats
           week: [
-            { $match: { createdAt: { $gte: weekAgo } } },
+            { $match: { startTime: { $gte: weekAgo } } },
             {
               $group: {
                 _id: null,
@@ -58,8 +45,6 @@ export async function GET(request: NextRequest) {
               },
             },
           ],
-
-          // Overall stats
           overall: [
             {
               $group: {
@@ -70,16 +55,14 @@ export async function GET(request: NextRequest) {
               },
             },
           ],
-
-          // Best session
           bestSession: [
-            { $sort: { focusPercentage: -1 } },
+            { $sort: { focusPercentage: -1, duration: -1 } },
             { $limit: 1 },
             {
               $project: {
                 focusPercentage: 1,
                 duration: 1,
-                createdAt: 1,
+                startTime: 1,
               },
             },
           ],
@@ -87,34 +70,28 @@ export async function GET(request: NextRequest) {
       },
     ];
 
-    const results = await db
-      .collection("sessions")
-      .aggregate(pipeline)
-      .toArray();
-    const data = results[0];
+    const [data] = await db.collection("sessions").aggregate(pipeline).toArray();
+    const { current: currentStreak, best: bestStreak } = await calculateStreaks(
+      db,
+      userId
+    );
 
-    // Calculate streak
-    const streak = await calculateCurrentStreak(db, userId);
-
-    // Format response
-    const todayStats = data.today[0] || {
-      sessions: 0,
-      totalTime: 0,
-      avgFocus: 0,
-    };
-
-    const weekStats = data.week[0] || { avgFocus: 0 };
-    const overallStats = data.overall[0] || {
+    const todayStats = data?.today?.[0] || { sessions: 0, totalTime: 0, avgFocus: 0 };
+    const weekStats = data?.week?.[0] || { avgFocus: 0 };
+    const overallStats = data?.overall?.[0] || {
       totalSessions: 0,
       totalTime: 0,
       avgFocus: 0,
     };
-    const bestSession = data.bestSession[0];
+    const bestSession = data?.bestSession?.[0] || null;
+
+    const totalFocusTimeMinutes = Math.round((overallStats.totalTime || 0) / 60);
+    const averageFocus = Math.round(overallStats.avgFocus || 0);
 
     return apiResponse({
       today: {
         sessions: todayStats.sessions,
-        minutes: Math.round(todayStats.totalTime / 60),
+        minutes: Math.round((todayStats.totalTime || 0) / 60),
         focusPercentage: Math.round(todayStats.avgFocus || 0),
       },
       week: {
@@ -122,88 +99,95 @@ export async function GET(request: NextRequest) {
       },
       overall: {
         totalSessions: overallStats.totalSessions,
-        totalHours: Math.round((overallStats.totalTime / 3600) * 10) / 10,
-        averageFocus: Math.round(overallStats.avgFocus || 0),
+        totalHours: Math.round(((overallStats.totalTime || 0) / 3600) * 10) / 10,
+        averageFocus,
       },
       streak: {
-        current: streak,
-        best: streak, // TODO: Store best streak separately
+        current: currentStreak,
+        best: bestStreak,
       },
       bestSession: bestSession
         ? {
             focusPercentage: bestSession.focusPercentage,
             duration: Math.round(bestSession.duration / 60),
-            date: bestSession.createdAt,
+            date: bestSession.startTime,
           }
         : null,
 
-      // Quick access for hooks
+      // For existing hooks/components
       todayFocus: Math.round(todayStats.avgFocus || 0),
-      todayMinutes: Math.round(todayStats.totalTime / 60),
+      todayMinutes: Math.round((todayStats.totalTime || 0) / 60),
       todaySessions: todayStats.sessions,
-      currentStreak: streak,
+      currentStreak,
       weeklyAverage: Math.round(weekStats.avgFocus || 0),
       totalSessions: overallStats.totalSessions,
-      totalHours: Math.round((overallStats.totalTime / 3600) * 10) / 10,
+      totalHours: Math.round(((overallStats.totalTime || 0) / 3600) * 10) / 10,
+
+      // For profile page
+      totalFocusTime: totalFocusTimeMinutes,
+      averageFocus,
+      bestStreak,
+      achievements: [],
     });
   } catch (error) {
     return handleApiError(error);
   }
 }
 
-// ============================================
-// HELPER FUNCTIONS
-// ============================================
-
-async function calculateCurrentStreak(
-  db: any,
-  userId: string
-): Promise<number> {
-  // Get unique dates with sessions
-  const pipeline = [
-    { $match: { userId, isCompleted: true } },
-    {
-      $group: {
-        _id: {
-          $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+async function calculateStreaks(db: any, userId: string): Promise<{ current: number; best: number }> {
+  const dates = await db
+    .collection("sessions")
+    .aggregate([
+      { $match: { userId, isCompleted: true, isArchived: { $ne: true } } },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: "%Y-%m-%d", date: "$startTime" },
+          },
         },
       },
-    },
-    { $sort: { _id: -1 } },
-    { $limit: 365 },
-  ];
+      { $sort: { _id: 1 } },
+      { $limit: 3650 },
+    ])
+    .toArray();
 
-  const dates = await db.collection("sessions").aggregate(pipeline).toArray();
+  if (dates.length === 0) return { current: 0, best: 0 };
 
-  if (dates.length === 0) return 0;
+  const parsed = dates
+    .map((d: any) => new Date(`${d._id}T00:00:00.000Z`))
+    .filter((d: Date) => !Number.isNaN(d.getTime()))
+    .sort((a: Date, b: Date) => a.getTime() - b.getTime());
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todayStr = today.toISOString().split("T")[0];
-
-  let streak = 0;
-  let checkDate = new Date(today);
-
-  // Check if today has a session
-  const hasToday = dates.some((d: any) => d._id === todayStr);
-
-  // If no session today, start from yesterday
-  if (!hasToday) {
-    checkDate.setDate(checkDate.getDate() - 1);
-  }
-
-  // Count consecutive days
-  for (let i = 0; i < 365; i++) {
-    const dateStr = checkDate.toISOString().split("T")[0];
-    const hasSession = dates.some((d: any) => d._id === dateStr);
-
-    if (hasSession) {
-      streak++;
-      checkDate.setDate(checkDate.getDate() - 1);
-    } else {
-      break;
+  let best = 1;
+  let run = 1;
+  for (let i = 1; i < parsed.length; i++) {
+    const prev = parsed[i - 1];
+    const curr = parsed[i];
+    const diffDays = Math.round((curr.getTime() - prev.getTime()) / 86400000);
+    if (diffDays === 1) {
+      run++;
+      best = Math.max(best, run);
+    } else if (diffDays > 1) {
+      run = 1;
     }
   }
 
-  return streak;
+  const daySet = new Set(dates.map((d: any) => d._id));
+  const cursor = new Date();
+  cursor.setHours(0, 0, 0, 0);
+  const todayKey = cursor.toISOString().split("T")[0];
+  let current = 0;
+
+  if (!daySet.has(todayKey)) {
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  while (true) {
+    const key = cursor.toISOString().split("T")[0];
+    if (!daySet.has(key)) break;
+    current++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  return { current, best: Math.max(best, current) };
 }

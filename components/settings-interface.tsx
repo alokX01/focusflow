@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import { useSettingsContext } from "@/contexts/settings-context";
 import { Settings } from "@/hooks/use-settings";
-import { toast } from "sonner";
+import { toast } from "@/hooks/use-toast";
 import { Input } from "./ui/input";
 
 export function SettingsInterface() {
@@ -62,9 +62,9 @@ export function SettingsInterface() {
     try {
       await updateSettings(localSettings);
       setHasChanges(false);
-      toast.success("Settings saved.");
+      toast({ title: "Settings saved." });
     } catch (error) {
-      toast.error("Failed to save settings");
+      toast({ title: "Failed to save settings", variant: "destructive" });
       console.error(error);
     } finally {
       setIsSaving(false);
@@ -82,9 +82,9 @@ export function SettingsInterface() {
     try {
       await resetSettings();
       setHasChanges(false);
-      toast.success("Settings reset to defaults.");
+      toast({ title: "Settings reset to defaults." });
     } catch (error) {
-      toast.error("Failed to reset settings");
+      toast({ title: "Failed to reset settings", variant: "destructive" });
       console.error(error);
     }
   };

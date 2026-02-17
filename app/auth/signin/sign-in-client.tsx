@@ -1,12 +1,11 @@
-// app/auth/signin/sign-in-client.tsx
 "use client";
 
-import { useEffect, useState } from "react";
-import { signIn } from "next-auth/react";
+import { useEffect, useRef, useState } from "react";
+import { signIn, useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { toast } from "sonner";
+import { toast } from "@/hooks/use-toast";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +31,8 @@ import {
 export function SignInClient() {
   const router = useRouter();
   const params = useSearchParams();
+  const { status } = useSession();
+  const callbackUrl = params.get("callbackUrl") || "/dashboard";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -39,12 +40,30 @@ export function SignInClient() {
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasShownRegisteredToast = useRef(false);
 
-  // Sync ?error from URL into local state (e.g., from callbacks)
   const errorParam = params.get("error");
+  const registeredParam = params.get("registered");
+
   useEffect(() => {
     if (errorParam) setError(errorParam);
   }, [errorParam]);
+
+  useEffect(() => {
+    if (registeredParam === "1" && !hasShownRegisteredToast.current) {
+      hasShownRegisteredToast.current = true;
+      toast({
+        title: "Account created successfully",
+        description: "Please sign in to continue.",
+      });
+    }
+  }, [registeredParam]);
+
+  useEffect(() => {
+    if (status === "authenticated") {
+      router.replace(callbackUrl);
+    }
+  }, [status, router, callbackUrl]);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,14 +78,17 @@ export function SignInClient() {
       });
 
       if (res?.ok) {
-        toast.success("Welcome back!", {
-          description: "Redirecting to dashboard...",
+        toast({
+          title: "Welcome back!",
+          description: "Redirecting...",
         });
-        router.push("/dashboard");
+        router.replace(callbackUrl);
       } else {
         setError("Invalid email or password");
-        toast.error("Sign in failed", {
+        toast({
+          title: "Sign in failed",
           description: "Please check your credentials and try again",
+          variant: "destructive",
         });
       }
     } catch {
@@ -79,12 +101,23 @@ export function SignInClient() {
   const handleGoogleSignIn = async () => {
     setIsGoogleLoading(true);
     try {
-      await signIn("google", { callbackUrl: "/dashboard" });
+      await signIn("google", { callbackUrl });
     } catch {
-      toast.error("Google sign in failed");
+      toast({
+        title: "Google sign in failed",
+        variant: "destructive",
+      });
       setIsGoogleLoading(false);
     }
   };
+
+  if (status === "loading" || status === "authenticated") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-background to-primary/5 p-4">
@@ -157,7 +190,7 @@ export function SignInClient() {
                   <Input
                     id="password"
                     type={showPassword ? "text" : "password"}
-                    placeholder="••••••••"
+                    placeholder="********"
                     className="pl-10 pr-10"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -232,7 +265,7 @@ export function SignInClient() {
                 href="/demo"
                 className="text-xs text-muted-foreground hover:text-foreground transition-colors"
               >
-                Try demo mode →
+                Try demo mode -&gt;
               </Link>
             </div>
           </CardContent>

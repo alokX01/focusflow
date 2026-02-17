@@ -29,16 +29,18 @@ export async function POST(request: NextRequest) {
 
     // Validate input
     const validated = RegisterSchema.parse(body);
+    const email = validated.email.toLowerCase();
+    const name = validated.name.trim();
 
     const db = await getDatabase();
 
     // Check if user already exists
     const existingUser = await db.collection("users").findOne({
-      email: validated.email.toLowerCase(),
+      email,
     });
 
     if (existingUser) {
-      return apiError("User with this email already exists", 409);
+      return apiError("Account already exists. Please sign in.", 409);
     }
 
     // Hash password
@@ -46,8 +48,8 @@ export async function POST(request: NextRequest) {
 
     // Create user
     const newUser = {
-      name: validated.name,
-      email: validated.email.toLowerCase(),
+      name,
+      email,
       hashedPassword,
       emailVerified: null,
       image: null,
@@ -56,11 +58,19 @@ export async function POST(request: NextRequest) {
       updatedAt: new Date(),
     };
 
-    const result = await db.collection("users").insertOne(newUser);
+    let result;
+    try {
+      result = await db.collection("users").insertOne(newUser);
+    } catch (e: any) {
+      if (e?.code === 11000) {
+        return apiError("Account already exists. Please sign in.", 409);
+      }
+      throw e;
+    }
 
     // Create default settings
     await db.collection("userSettings").insertOne({
-      userId: validated.email.toLowerCase(),
+      userId: result.insertedId.toString(),
       focusDuration: 25,
       shortBreakDuration: 5,
       longBreakDuration: 15,

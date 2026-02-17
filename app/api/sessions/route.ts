@@ -1,111 +1,90 @@
+// app/api/sessions/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { getDatabase } from "@/lib/mongodb";
 import { authOptions } from "@/lib/auth";
-import { ObjectId } from "mongodb";
 import { z } from "zod";
-import type { Session, SessionsResponse } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
 
-// ============================================
-// ZOD VALIDATION SCHEMAS
-// ============================================
-
 const CreateSessionSchema = z.object({
-  targetDuration: z.number().min(1).max(240), // 1-240 minutes
+  targetDuration: z.number().min(1).max(240),
   sessionType: z.enum(["focus", "break", "pomodoro"]).default("focus"),
   cameraEnabled: z.boolean().default(false),
-  // UPDATED: Replaced 'goal' with 'task' to match your components
   task: z.string().max(200).optional(),
   tags: z.array(z.string()).max(10).default([]),
 });
 
-// Helper function to get start date from period
+// --------------------------------------------
+// DATE FILTER LOGIC
+// --------------------------------------------
+
 function getStartDateFromPeriod(period?: string | null): Date | undefined {
   const now = new Date();
-  now.setHours(0, 0, 0, 0); // Start of today
+  now.setHours(0, 0, 0, 0);
 
   switch (period) {
     case "week":
-      // Start of the week (e.g., Sunday)
       now.setDate(now.getDate() - now.getDay());
       return now;
+
     case "month":
-      // Start of the month
       now.setDate(1);
       return now;
+
     case "quarter":
-      // Start of the quarter
-      const quarterMonth = Math.floor(now.getMonth() / 3) * 3;
-      now.setMonth(quarterMonth, 1);
+      const quarterStart = Math.floor(now.getMonth() / 3) * 3;
+      now.setMonth(quarterStart, 1);
       return now;
+
     case "year":
-      // Start of the year
       now.setMonth(0, 1);
       return now;
+
     default:
-      // Default: if no period, maybe return last 7 days or undefined
-      // For this use case, we'll match 'week' as a default if period is missing
-      now.setDate(now.getDate() - now.getDay());
-      return now;
+      return undefined;
   }
 }
 
-// ============================================
-// GET - Fetch Sessions with Filtering
-// ============================================
+// --------------------------------------------
+// GET ALL SESSIONS
+// --------------------------------------------
 
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-
-    if (!session?.user) {
+    if (!session?.user)
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
 
     const userId = (session.user as any).id || session.user.email;
     const { searchParams } = new URL(request.url);
 
-    // UPDATED: Read filters from HistoryInterface
     const period = searchParams.get("period");
     const archived = searchParams.get("archived");
 
     const db = await getDatabase();
 
-    // Build MongoDB query
     const query: any = { userId };
 
-    // 1. Handle Archived Filter
-    // This logic ensures that by default, archived items are hidden
-    // Only if 'archived' is explicitly "true" will we show them.
-    if (archived === "true") {
-      query.isArchived = true;
-    } else {
-      query.isArchived = { $ne: true }; // $ne: true matches 'false' or 'null'
-    }
+    // Archived filter
+    if (archived === "true") query.isArchived = true;
+    else query.isArchived = { $ne: true };
 
-    // 2. Handle Period Filter
+    // Time filtering
     const startDate = getStartDateFromPeriod(period);
-    if (startDate) {
-      query.startTime = { $gte: startDate };
-    }
+    if (startDate) query.startTime = { $gte: startDate };
 
     // Fetch sessions
     const sessions = await db
-      .collection<Session>("sessions")
+      .collection("sessions")
       .find(query)
       .sort({ startTime: -1 })
-      .limit(500) // Set a reasonable high limit for client-side filtering
+      .limit(500)
       .toArray();
 
-    // SIMPLIFIED RESPONSE: The HistoryInterface component does its own
-    // stats calculation and searching client-side.
     return NextResponse.json({
-      sessions: sessions.map((s) => ({
-        ...s,
-        _id: s._id.toString(),
-      })),
+      sessions: sessions.map((s) => ({ ...s, _id: s._id.toString() })),
     });
   } catch (error) {
     console.error("Error fetching sessions:", error);
@@ -116,73 +95,60 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// ============================================
-// POST - Create New Session
-// ============================================
+// --------------------------------------------
+// CREATE NEW SESSION
+// --------------------------------------------
 
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-
-    if (!session?.user) {
+    if (!session?.user)
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
 
     const userId = (session.user as any).id || session.user.email;
     const body = await request.json();
 
-    // Validate input
     const validated = CreateSessionSchema.parse(body);
-
     const db = await getDatabase();
 
-    // UPDATED: Added all fields from your interface
     const newSession: any = {
       userId,
-
-      // Time tracking
       startTime: new Date(),
       endTime: null,
       duration: 0,
-      targetDuration: validated.targetDuration * 60, // Convert to seconds
-      pausedDuration: 0, // ADDED: Default value
 
-      // Focus metrics
+      targetDuration: validated.targetDuration * 60, // convert min → sec
+
+      pausedDuration: 0,
       focusPercentage: 100,
       distractionCount: 0,
-      focusScore: 0, // ADDED: Default value
+      focusScore: 0,
 
-      // Session configuration
       sessionType: validated.sessionType,
       isCompleted: false,
       cameraEnabled: validated.cameraEnabled,
-      goal: "", // Kept goal for compatibility, but using task
+
+      task: validated.task || "",
       tags: validated.tags,
+      goal: "",
 
-      // NEW FIELDS
-      task: validated.task || "", // ADDED: From schema
-      isArchived: false, // ADDED: Default value
-      timeline: [], // ADDED: Default value
+      isArchived: false,
+      timeline: [],
 
-      // Timestamps
       createdAt: new Date(),
       updatedAt: new Date(),
     };
 
     const result = await db.collection("sessions").insertOne(newSession);
 
-    // Update daily stats
     await updateDailyStats(db, userId, "session_started");
-
-    // Return the full session object with the insertedId
-    const createdSession = {
-      ...newSession,
-      _id: result.insertedId,
-    };
 
     return NextResponse.json(
       {
-        session: { ...createdSession, _id: createdSession._id.toString() },
+        session: {
+          ...newSession,
+          _id: result.insertedId.toString(),
+        },
         message: "Session created successfully",
       },
       { status: 201 }
@@ -203,9 +169,9 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// ============================================
-// HELPER FUNCTIONS
-// ============================================
+// --------------------------------------------
+// HELPER: Update Daily Stats
+// --------------------------------------------
 
 async function updateDailyStats(
   db: any,

@@ -41,7 +41,7 @@ import {
   Award,
   X,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { useSettingsContext } from "@/contexts/settings-context";
 
@@ -392,7 +392,7 @@ export function TimerInterface({
         if (t - lastDistractionRef.current > 5000) {
           lastDistractionRef.current = t;
           setDistractionCount((prev) => prev + 1);
-          toast.warning("👀 Distraction detected", { duration: 2000 });
+          toast({ title: "Distraction detected" });
         }
 
         // Auto-pause
@@ -406,7 +406,7 @@ export function TimerInterface({
             setIsPaused(true);
             setPauseReason("auto");
             playSound("pause", settings.soundEnabled);
-            toast.message("⏸️ Auto-paused due to distraction");
+            toast({ title: "Auto-paused due to distraction" });
             distractionTimerRef.current = null;
           }, settings.distractionThreshold * 1000);
         }
@@ -420,7 +420,7 @@ export function TimerInterface({
         if (settings.pauseOnDistraction && isPaused && pauseReason === "auto") {
           setIsPaused(false);
           setPauseReason(null);
-          toast.message("▶️ Auto-resumed");
+          toast({ title: "Auto-resumed" });
         }
       }
     });
@@ -442,7 +442,7 @@ export function TimerInterface({
   // Init camera
   const initializeCamera = useCallback(async () => {
     if (!settings.cameraEnabled) {
-      toast.info("Camera tracking is disabled in settings");
+      toast({ title: "Camera tracking is disabled in settings" });
       return false;
     }
     if (initInProgressRef.current) return false;
@@ -486,11 +486,14 @@ export function TimerInterface({
       subscribeSnapshots();
 
       setCameraReady(true);
-      toast.success("📹 Camera & detector ready");
+      toast({ title: "Camera & detector ready" });
       return true;
     } catch (e: any) {
       console.error(e);
-      toast.error(e?.message || "Failed to initialize camera");
+      toast({
+        title: e?.message || "Failed to initialize camera",
+        variant: "destructive",
+      });
       setCameraReady(false);
       return false;
     } finally {
@@ -625,7 +628,7 @@ export function TimerInterface({
       setSessionId(result.session._id);
     } catch (err) {
       console.error("❌ Session creation failed:", err);
-      toast.error("Failed to start session");
+      toast({ title: "Failed to start session", variant: "destructive" });
     }
   };
 
@@ -633,7 +636,7 @@ export function TimerInterface({
     setIsPaused(true);
     setPauseReason("manual");
     playSound("pause", settings.soundEnabled);
-    toast.info("⏸️ Session paused");
+    toast({ title: "Session paused" });
     if (distractionTimerRef.current) {
       clearTimeout(distractionTimerRef.current);
       distractionTimerRef.current = null;
@@ -644,7 +647,7 @@ export function TimerInterface({
     setIsPaused(false);
     setPauseReason(null);
     playSound("start", settings.soundEnabled);
-    toast.info("▶️ Session resumed");
+    toast({ title: "Session resumed" });
   };
 
   // STOP HANDLER – now accepts { completed?: boolean }
@@ -739,7 +742,7 @@ export function TimerInterface({
       }
     }
 
-    toast.success(wasCompleted ? "✅ Session completed!" : "Session ended");
+    toast({ title: wasCompleted ? "Session completed!" : "Session ended" });
   };
 
   const handleSessionComplete = () => {

@@ -31,7 +31,7 @@ import {
   setFaceFocusOptions,
   type FaceFocusSnapshot,
 } from "@/lib/face-detection";
-import { toast } from "sonner";
+import { toast } from "@/hooks/use-toast";
 
 interface CameraSetupProps {
   onSetupComplete?: () => void;
@@ -104,11 +104,11 @@ export function CameraSetup({ onSetupComplete }: CameraSetupProps) {
       // Begin test phase
       setStep("testing");
       runTest();
-      toast.success("Camera enabled!");
+      toast({ title: "Camera enabled!" });
     } catch (err: any) {
       const msg = err?.message || "Failed to enable camera";
       setError(msg);
-      toast.error(msg);
+      toast({ title: msg, variant: "destructive" });
       stopCameraStream(cameraStream);
       setCameraStream(null);
     } finally {
@@ -149,7 +149,7 @@ export function CameraSetup({ onSetupComplete }: CameraSetupProps) {
           stopFaceFocus();
         } catch {}
         setStep("complete");
-        toast.success("Camera setup complete! 🎉");
+        toast({ title: "Camera setup complete!" });
       }
     });
   };

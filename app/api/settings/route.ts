@@ -64,10 +64,30 @@ export async function GET(request: NextRequest) {
       return apiError("Unauthorized", 401);
     }
 
-    const userId = (session.user as any).id || session.user.email;
+    const userId = (session.user as any).id
+      ? String((session.user as any).id)
+      : "";
+    const email = session.user.email?.toLowerCase();
     const db = await getDatabase();
 
-    const settings = await db.collection("userSettings").findOne({ userId });
+    let settings = userId
+      ? await db.collection("userSettings").findOne({ userId })
+      : null;
+
+    if (!settings && email) {
+      settings = await db.collection("userSettings").findOne({ userId: email });
+
+      // Migrate legacy email-based settings to id-based
+      if (settings && userId) {
+        await db
+          .collection("userSettings")
+          .updateOne(
+            { _id: settings._id },
+            { $set: { userId, updatedAt: new Date() } }
+          );
+        settings = { ...settings, userId };
+      }
+    }
 
     if (!settings) {
       return apiError("Settings not found", 404);
@@ -94,7 +114,10 @@ export async function PUT(request: NextRequest) {
       return apiError("Unauthorized", 401);
     }
 
-    const userId = (session.user as any).id || session.user.email;
+    const userId = (session.user as any).id
+      ? String((session.user as any).id)
+      : "";
+    const email = session.user.email?.toLowerCase();
     const body = await request.json();
 
     // Validate input
@@ -102,16 +125,29 @@ export async function PUT(request: NextRequest) {
 
     const db = await getDatabase();
 
+    let existing = userId
+      ? await db.collection("userSettings").findOne({ userId })
+      : null;
+
+    if (!existing && email) {
+      existing = await db.collection("userSettings").findOne({ userId: email });
+    }
+
+    const canonicalUserId = userId || email;
+    if (!canonicalUserId) {
+      return apiError("User identifier missing", 400);
+    }
+
     // Update settings
     const result = await db.collection("userSettings").findOneAndUpdate(
-      { userId },
+      existing ? { _id: existing._id } : { userId: canonicalUserId },
       {
         $set: {
           ...validated,
+          userId: canonicalUserId,
           updatedAt: new Date(),
         },
         $setOnInsert: {
-          userId,
           createdAt: new Date(),
         },
       },
@@ -149,15 +185,27 @@ export async function DELETE(request: NextRequest) {
       return apiError("Unauthorized", 401);
     }
 
-    const userId = (session.user as any).id || session.user.email;
+    const userId = (session.user as any).id
+      ? String((session.user as any).id)
+      : "";
+    const email = session.user.email?.toLowerCase();
+    const canonicalUserId = userId || email;
+    if (!canonicalUserId) {
+      return apiError("User identifier missing", 400);
+    }
     const db = await getDatabase();
 
     // Delete existing settings
-    await db.collection("userSettings").deleteOne({ userId });
+    if (userId) {
+      await db.collection("userSettings").deleteOne({ userId });
+    }
+    if (email && email !== userId) {
+      await db.collection("userSettings").deleteOne({ userId: email });
+    }
 
     // Create default settings
     const defaultSettings = {
-      userId,
+      userId: canonicalUserId,
       // Timer
       focusDuration: 25,
       shortBreakDuration: 5,

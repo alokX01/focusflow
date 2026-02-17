@@ -24,9 +24,12 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       user: {
+        id: user._id.toString(),
         name: user.name,
         email: user.email,
-        avatar: user.avatar,
+        image: user.image || user.avatar || null,
+        createdAt: user.createdAt || null,
+        updatedAt: user.updatedAt || null,
         preferences: user.preferences || {},
       },
     });
@@ -56,10 +59,18 @@ export async function PUT(request: NextRequest) {
       updatedAt: new Date(),
     };
 
-    if (name) updateData.name = name;
-    if (focusGoal) updateData["preferences.focusGoal"] = focusGoal;
-    if (breakDuration) updateData["preferences.breakDuration"] = breakDuration;
-    if (dailyTarget) updateData["preferences.dailyTarget"] = dailyTarget;
+    if (typeof name === "string" && name.trim().length > 0) {
+      updateData.name = name.trim();
+    }
+    if (typeof focusGoal === "number") {
+      updateData["preferences.focusGoal"] = focusGoal;
+    }
+    if (typeof breakDuration === "number") {
+      updateData["preferences.breakDuration"] = breakDuration;
+    }
+    if (typeof dailyTarget === "number") {
+      updateData["preferences.dailyTarget"] = dailyTarget;
+    }
 
     const result = await db
       .collection("users")

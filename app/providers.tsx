@@ -2,12 +2,16 @@
 
 import { SessionProvider } from "next-auth/react";
 import { ThemeProvider } from "@/components/theme-provider";
-import { Toaster } from "@/components/ui/sonner";
+import { Toaster } from "@/components/ui/toaster";
 import { SettingsProvider } from "@/contexts/settings-context";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
-    <SessionProvider>
+    <SessionProvider
+      refetchInterval={5 * 60}
+      refetchOnWindowFocus={false}
+      refetchWhenOffline={false}
+    >
       <ThemeProvider
         attribute="class"
         defaultTheme="system"
@@ -16,7 +20,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       >
         <SettingsProvider>
           {children}
-          <Toaster position="top-right" richColors closeButton />
+          <Toaster />
         </SettingsProvider>
       </ThemeProvider>
     </SessionProvider>

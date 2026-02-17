@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { signIn, useSession } from "next-auth/react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,7 +27,7 @@ import {
   CheckCircle,
 } from "lucide-react";
 import Link from "next/link";
-import { toast } from "sonner";
+import { toast } from "@/hooks/use-toast";
 import { z } from "zod";
 
 const SignupSchema = z.object({
@@ -43,6 +43,9 @@ const SignupSchema = z.object({
 
 export default function SignUpPage() {
   const router = useRouter();
+  const params = useSearchParams();
+  const { status } = useSession();
+  const callbackUrl = params.get("callbackUrl") || "/dashboard";
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -53,6 +56,12 @@ export default function SignUpPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (status === "authenticated") {
+      router.replace(callbackUrl);
+    }
+  }, [status, router, callbackUrl]);
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -81,7 +90,10 @@ export default function SignUpPage() {
     e.preventDefault();
 
     if (!validateForm()) {
-      toast.error("Please fix the errors before continuing");
+      toast({
+        title: "Please fix the form errors",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -102,30 +114,25 @@ export default function SignUpPage() {
       const data = await res.json();
 
       if (res.ok) {
-        toast.success("Account created!", {
-          description: "Signing you in...",
+        toast({
+          title: "Account created!",
+          description: "Please sign in with your new account.",
         });
-
-        // Auto sign in after registration
-        const signInRes = await signIn("credentials", {
-          email: formData.email,
-          password: formData.password,
-          redirect: false,
-        });
-
-        if (signInRes?.ok) {
-          router.push("/dashboard");
-          router.refresh();
-        }
+        router.replace("/auth/signin?registered=1");
       } else {
         setErrors({ general: data.error || "Registration failed" });
-        toast.error("Registration failed", {
+        toast({
+          title: "Registration failed",
           description: data.error,
+          variant: "destructive",
         });
       }
     } catch (err) {
       setErrors({ general: "Something went wrong. Please try again." });
-      toast.error("An error occurred");
+      toast({
+        title: "An error occurred",
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -134,9 +141,12 @@ export default function SignUpPage() {
   const handleGoogleSignUp = async () => {
     setIsGoogleLoading(true);
     try {
-      await signIn("google", { callbackUrl: "/dashboard" });
+      await signIn("google", { callbackUrl });
     } catch (err) {
-      toast.error("Google sign up failed");
+      toast({
+        title: "Google sign up failed",
+        variant: "destructive",
+      });
       setIsGoogleLoading(false);
     }
   };
@@ -162,6 +172,14 @@ export default function SignUpPage() {
       : passwordStrength < 80
       ? "bg-yellow-500"
       : "bg-green-500";
+
+  if (status === "loading" || status === "authenticated") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-background to-primary/5 p-4">

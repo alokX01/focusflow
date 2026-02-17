@@ -1,10 +1,32 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { ApiError } from "./api-client";
+import { ObjectId } from "mongodb";
 
-/**
- * Standard API response wrapper
- */
+// ================================
+// Utility: Convert Mongo documents
+// ================================
+export function serialize<T>(doc: T): any {
+  if (!doc) return doc;
+
+  const result: any = { ...doc };
+
+  if (result._id instanceof ObjectId) {
+    result._id = result._id.toString();
+  }
+
+  // Convert nested Mongo fields
+  for (const key in result) {
+    if (result[key] instanceof ObjectId) {
+      result[key] = result[key].toString();
+    }
+  }
+
+  return result;
+}
+
+// ================================
+// SUCCESS RESPONSE (STANDARDIZED)
+// ================================
 export function apiResponse<T>(
   data: T,
   status: number = 200,
@@ -13,16 +35,16 @@ export function apiResponse<T>(
   return NextResponse.json(
     {
       success: true,
-      data,
       message,
+      data: serialize(data),
     },
     { status }
   );
 }
 
-/**
- * Standard API error response
- */
+// ================================
+// ERROR RESPONSE (STANDARDIZED)
+// ================================
 export function apiError(
   error: string | Error,
   status: number = 500,
@@ -40,117 +62,109 @@ export function apiError(
   );
 }
 
-/**
- * Handle API errors consistently
- */
+// ================================
+// MAIN ERROR HANDLER (Zod + Custom)
+// ================================
 export function handleApiError(error: unknown) {
-  console.error("API Error:", error);
+  console.error("🔴 API ERROR:", error);
 
   if (error instanceof ZodError) {
     return apiError("Validation failed", 400, error.errors);
-  }
-
-  if (error instanceof ApiError) {
-    return apiError(error.message, error.status, error.data);
   }
 
   if (error instanceof Error) {
     return apiError(error.message, 500);
   }
 
-  return apiError("Internal server error", 500);
+  return apiError("Internal Server Error", 500);
 }
 
-/**
- * Validate request method
- */
+// ================================
+// METHOD VALIDATION
+// ================================
 export function validateMethod(
   request: Request,
-  allowedMethods: string[]
-): boolean {
-  return allowedMethods.includes(request.method);
+  allowed: string[]
+): NextResponse | null {
+  if (!allowed.includes(request.method)) {
+    return apiError(`Method ${request.method} Not Allowed`, 405);
+  }
+  return null;
 }
 
-/**
- * Parse request body safely
- */
+// ================================
+// SAFE BODY PARSING
+// ================================
 export async function parseRequestBody<T = any>(
   request: Request
 ): Promise<T | null> {
   try {
-    const body = await request.json();
-    return body as T;
-  } catch (error) {
+    return (await request.json()) as T;
+  } catch {
     return null;
   }
 }
 
-/**
- * Get query parameters from URL
- */
+// ================================
+// QUERY PARAMS EXTRACTOR
+// ================================
 export function getQueryParams(request: Request): URLSearchParams {
-  const url = new URL(request.url);
-  return url.searchParams;
+  return new URL(request.url).searchParams;
 }
 
-/**
- * Paginate array results
- */
-export function paginate<T>(items: T[], page: number = 1, limit: number = 50) {
-  const offset = (page - 1) * limit;
-  const paginatedItems = items.slice(offset, offset + limit);
+// ================================
+// PAGINATION HELPER
+// ================================
+export function paginate<T>(items: T[], page = 1, limit = 50) {
+  const start = (page - 1) * limit;
+  const end = start + limit;
 
   return {
-    items: paginatedItems,
+    items: items.slice(start, end),
     pagination: {
       page,
       limit,
       total: items.length,
       totalPages: Math.ceil(items.length / limit),
-      hasMore: offset + limit < items.length,
+      hasMore: end < items.length,
     },
   };
 }
 
-/**
- * Rate limiting helper (simple in-memory)
- */
+// ================================
+// RATE LIMIT (simple in-memory)
+// ================================
 const rateLimitMap = new Map<string, number[]>();
 
 export function rateLimit(
-  identifier: string,
-  maxRequests: number = 100,
-  windowMs: number = 60000
-): boolean {
+  key: string,
+  maxRequests = 60,
+  windowMs = 60_000
+) {
   const now = Date.now();
-  const requests = rateLimitMap.get(identifier) || [];
+  const timestamps = rateLimitMap.get(key) || [];
 
-  // Remove old requests outside the window
-  const recentRequests = requests.filter((time) => now - time < windowMs);
+  // Keep only recent events
+  const recent = timestamps.filter((t) => now - t < windowMs);
 
-  if (recentRequests.length >= maxRequests) {
-    return false; // Rate limit exceeded
-  }
+  if (recent.length >= maxRequests) return false;
 
-  recentRequests.push(now);
-  rateLimitMap.set(identifier, recentRequests);
-
+  recent.push(now);
+  rateLimitMap.set(key, recent);
   return true;
 }
 
-/**
- * Clean up old rate limit entries periodically
- */
+// Cleanup job
 setInterval(() => {
   const now = Date.now();
-  const windowMs = 60000;
+  const windowMs = 60_000;
 
-  rateLimitMap.forEach((requests, key) => {
-    const recentRequests = requests.filter((time) => now - time < windowMs);
-    if (recentRequests.length === 0) {
+  for (const [key, timestamps] of rateLimitMap.entries()) {
+    const recent = timestamps.filter((t) => now - t < windowMs);
+    if (recent.length === 0) {
       rateLimitMap.delete(key);
     } else {
-      rateLimitMap.set(key, recentRequests);
+      rateLimitMap.set(key, recent);
     }
-  });
-}, 60000); // Clean up every minute
+  }
+}, 60_000);

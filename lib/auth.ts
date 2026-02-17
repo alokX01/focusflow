@@ -7,122 +7,111 @@ import { compare } from "bcryptjs";
 import { getDatabase } from "./mongodb";
 
 export const authOptions: NextAuthOptions = {
+  // *********** MONGO ADAPTER ***********
   adapter: MongoDBAdapter(clientPromise) as any,
 
+  // *********** PROVIDERS ***********
   providers: [
-    // Google OAuth
+    // GOOGLE AUTH
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID || "",
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
-      authorization: {
-        params: {
-          prompt: "consent",
-          access_type: "offline",
-          response_type: "code",
-        },
-      },
+      // Allow linking Google to an existing credentials account with same email
+      allowDangerousEmailAccountLinking: true,
     }),
 
-    // Credentials (Email/Password)
+    // CREDENTIALS LOGIN
     CredentialsProvider({
       name: "Credentials",
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
+
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
+          throw new Error("Missing credentials");
+        }
+
+        const db = await getDatabase();
+        const email = credentials.email.toLowerCase().trim();
+
+        const user = await db.collection("users").findOne({
+          email,
+        });
+
+        if (!user || !user.hashedPassword) {
           throw new Error("Invalid credentials");
         }
 
-        try {
-          const db = await getDatabase();
-          const user = await db.collection("users").findOne({
-            email: credentials.email,
-          });
+        const valid = await compare(credentials.password, user.hashedPassword);
+        if (!valid) throw new Error("Invalid credentials");
 
-          if (!user || !user.hashedPassword) {
-            throw new Error("Invalid credentials");
-          }
-
-          const isPasswordValid = await compare(
-            credentials.password,
-            user.hashedPassword
-          );
-
-          if (!isPasswordValid) {
-            throw new Error("Invalid credentials");
-          }
-
-          return {
-            id: user._id.toString(),
-            email: user.email,
-            name: user.name,
-            image: user.image,
-          };
-        } catch (error) {
-          console.error("Auth error:", error);
-          return null;
-        }
+        return {
+          id: user._id.toString(),
+          email: user.email,
+          name: user.name || "User",
+          image: user.image || null,
+        };
       },
     }),
   ],
 
+  // *********** SESSION CONFIG ***********
   session: {
     strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60, // 30 days
+    maxAge: 30 * 24 * 60 * 60,
+    updateAge: 24 * 60 * 60,
+  },
+
+  jwt: {
+    maxAge: 30 * 24 * 60 * 60,
   },
 
   pages: {
     signIn: "/auth/signin",
-    signOut: "/auth/signout",
-    error: "/auth/error",
-    newUser: "/auth/signup",
+    newUser: "/dashboard",
   },
 
+  // *********** CALLBACKS ***********
   callbacks: {
-    async jwt({ token, user, account }) {
-      // Initial sign in
-      if (account && user) {
-        return {
-          ...token,
-          id: user.id,
-          provider: account.provider,
-        };
+    async jwt({ token, user }) {
+      // Initial login
+      if (user) {
+        token.id = (user as any).id;
+        if ((user as any).email) token.email = (user as any).email;
+        if ((user as any).name) token.name = (user as any).name;
+        if ((user as any).image) token.picture = (user as any).image;
       }
-
       return token;
     },
 
     async session({ session, token }) {
       if (session.user) {
-        // Attach the id to the session user without changing the declared Session type
-        (session.user as any).id = token.id as string;
+        (session.user as any).id = token.id; // REQUIRED for session tracking + analytics
       }
-
       return session;
     },
 
     async redirect({ url, baseUrl }) {
-      // Allows relative callback URLs
-      if (url.startsWith("/")) return `${baseUrl}${url}`;
-      // Allows callback URLs on the same origin
-      else if (new URL(url).origin === baseUrl) return url;
-
+      if (url.startsWith("/")) return baseUrl + url;
+      if (new URL(url).origin === baseUrl) return url;
       return baseUrl;
     },
   },
 
+  // *********** EVENTS ***********
   events: {
-    async signIn({ user, account, isNewUser }) {
-      console.log(`✅ User signed in: ${user.email} via ${account?.provider}`);
+    // When user signs in first time
+    async signIn({ user, isNewUser }) {
+      console.log(`✅ Sign-in: ${user.email}`);
 
-      // Create default settings for new users
       if (isNewUser) {
         try {
           const db = await getDatabase();
+          const userId = String((user as any).id);
           await db.collection("userSettings").insertOne({
-            userId: user.id || user.email,
+            userId,
             focusDuration: 25,
             shortBreakDuration: 5,
             longBreakDuration: 15,
@@ -144,9 +133,9 @@ export const authOptions: NextAuthOptions = {
             updatedAt: new Date(),
           });
 
-          console.log(`✅ Default settings created for ${user.email}`);
-        } catch (error) {
-          console.error("Failed to create default settings:", error);
+          console.log(`🎉 Default settings created for ${user.email}`);
+        } catch (e) {
+          console.error("Error creating default settings:", e);
         }
       }
     },
@@ -156,15 +145,12 @@ export const authOptions: NextAuthOptions = {
     },
   },
 
-  debug: process.env.NODE_ENV === "development",
-
+  debug: process.env.NEXTAUTH_DEBUG === "true",
   secret: process.env.NEXTAUTH_SECRET,
 };
 
-/**
- * Helper to get session server-side
- */
+// *********** SESSION HELPER ***********
 export async function getServerAuthSession() {
   const { getServerSession } = await import("next-auth/next");
-  return await getServerSession(authOptions);
+  return getServerSession(authOptions);
 }

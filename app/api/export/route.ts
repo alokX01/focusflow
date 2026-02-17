@@ -49,9 +49,10 @@ export async function GET(request: NextRequest) {
       .collection("sessions")
       .find({
         userId,
-        createdAt: { $gte: startDate, $lte: endDate },
+        isArchived: { $ne: true },
+        startTime: { $gte: startDate, $lte: endDate },
       })
-      .sort({ createdAt: -1 })
+      .sort({ startTime: -1 })
       .toArray();
 
     if (format === "json") {

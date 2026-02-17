@@ -55,7 +55,7 @@ import {
   X,
   LucideIcon,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 interface Session {
@@ -134,7 +134,10 @@ export function HistoryInterface() {
     } catch (error: any) {
       if (error.name !== "AbortError") {
         console.error("Failed to fetch history:", error);
-        toast.error("Failed to load session history");
+        toast({
+          title: "Failed to load session history",
+          variant: "destructive",
+        });
       }
     } finally {
       setIsLoading(false);
@@ -205,9 +208,9 @@ export function HistoryInterface() {
       a.click();
       URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      toast.success("History exported successfully!");
+      toast({ title: "History exported successfully!" });
     } catch {
-      toast.error("Failed to export history");
+      toast({ title: "Failed to export history", variant: "destructive" });
     }
   };
 
@@ -312,12 +315,12 @@ export function HistoryInterface() {
 
       if (!resp.ok) throw new Error("Failed to update task");
 
-      toast.success("Task updated");
+      toast({ title: "Task updated" });
     } catch (e) {
       // Rollback on error
       setSessions(original);
       setFiltered(original);
-      toast.error("Failed to update task");
+      toast({ title: "Failed to update task", variant: "destructive" });
     } finally {
       setEditingSessionId(null);
       setEditingTaskName("");
@@ -358,7 +361,7 @@ export function HistoryInterface() {
       });
       if (!resp.ok) throw new Error("Failed to update archive state");
 
-      toast.success(toArchived ? "Session archived" : "Session unarchived");
+      toast({ title: toArchived ? "Session archived" : "Session unarchived" });
 
       // Final sync with server
       fetchHistoricalData();
@@ -366,7 +369,7 @@ export function HistoryInterface() {
       // rollback
       setSessions(original);
       setFiltered(original);
-      toast.error("Failed to update session");
+      toast({ title: "Failed to update session", variant: "destructive" });
     }
   };
 
@@ -394,11 +397,11 @@ export function HistoryInterface() {
         method: "DELETE",
       });
       if (!resp.ok) throw new Error("Failed to delete");
-      toast.success("Session deleted");
+      toast({ title: "Session deleted" });
     } catch (e) {
       setSessions(original);
       setFiltered(original);
-      toast.error("Failed to delete session");
+      toast({ title: "Failed to delete session", variant: "destructive" });
     }
   };
 
