@@ -1,252 +1,246 @@
-# FocusFlow - AI-Powered Focus Tracking App
+# FocusFlow
 
-A modern focus tracking application that uses computer vision to monitor your attention and help you maintain concentration during work sessions.
+FocusFlow is an AI-assisted productivity web app for deep work. It combines Pomodoro sessions, optional camera-based focus tracking, session history, analytics, and coaching insights in one dashboard.
 
-## Features
+## Live Deployment
 
-- 🎯 **AI-Powered Focus Tracking** - Uses TensorFlow.js and MediaPipe for real-time attention monitoring
-- ⏱️ **Pomodoro Timer** - Customizable focus and break sessions
-- 📊 **Analytics Dashboard** - Detailed insights into your focus patterns and productivity
-- 🌙 **Dark Mode** - Beautiful dark and light themes
-- 📱 **Responsive Design** - Works on desktop and mobile devices
-- 🎨 **Modern UI** - Built with Tailwind CSS and Radix UI components
+- Production: https://focusflow-pi-mocha.vercel.app
+
+## What This Project Includes
+
+- Authenticated user accounts with email/password credentials
+- Optional Google OAuth sign-in
+- Focus, short-break, and long-break session flow
+- Camera-based focus estimation using face landmarks
+- Auto-pause on distraction and optional auto-resume
+- Session timeline capture (focused vs unfocused samples)
+- Session history with edit, archive/unarchive, and delete
+- Analytics with trend charts, streaks, peak distraction windows
+- Export of sessions/analytics data as CSV or JSON
+- AI-generated post-session insights
+- Fallback heuristic insights when AI keys are not configured
+- Profile and achievement tracking
 
 ## Tech Stack
 
-- **Frontend**: Next.js 14, React 18, TypeScript
-- **Styling**: Tailwind CSS, Radix UI
-- **Database**: MongoDB Atlas
-- **AI/ML**: TensorFlow.js, MediaPipe Face Mesh
-- **Charts**: Recharts
-- **Icons**: Lucide React
+### Core
 
-## Getting Started
+- Next.js 14 (App Router)
+- React 18
+- TypeScript
+- Node.js >= 18.18.0
 
-### Prerequisites
+### UI and Frontend
 
-- Node.js 18+ 
-- MongoDB Atlas account
-- Modern browser with camera support
+- Tailwind CSS
+- Radix UI
+- Framer Motion
+- Lucide React icons
+- Recharts (analytics visualizations)
+- next-themes (theme handling)
 
-### Installation
+### Auth and Security
 
-1. **Clone the repository**
-   ```bash
-   git clone <your-repo-url>
-   cd focusflow-app
-   ```
+- NextAuth.js (v4)
+- @auth/mongodb-adapter
+- bcryptjs (password hashing)
+- Middleware route protection for private pages
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+### Data Layer
 
-3. **Set up environment variables**
-   ```bash
-   cp .env.example .env.local
-   ```
-   
-   Edit `.env.local` and set at least:
-   ```env
-   MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/focusflow?retryWrites=true&w=majority
-   NEXTAUTH_SECRET=your-long-random-secret
-   ```
+- MongoDB Atlas
+- Official MongoDB Node.js driver
+- Indexed collections initialized via protected `/api/init`
 
-   Optional variables:
-   - `MONGODB_DB_NAME` (defaults to `focusflow`)
-   - `NEXTAUTH_URL` (required in production; set to your deployed URL)
-   - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (enables Google auth button)
-   - `OPENAI_API_KEY` or `GOOGLE_API_KEY` (AI insight generation; otherwise heuristic fallback is used)
-   - `INIT_API_TOKEN` (protects `/api/init` index setup endpoint)
+### AI and Vision
 
-4. **Set up MongoDB Atlas**
-   - Create a new cluster on [MongoDB Atlas](https://www.mongodb.com/atlas)
-   - Create a database user with read/write permissions
-   - Whitelist your IP address
-   - Copy the connection string to your `.env.local` file
+- @tensorflow/tfjs
+- @tensorflow-models/face-landmarks-detection
+- @mediapipe/face_mesh
+- OpenAI Chat Completions API (optional)
+- Google Gemini API (optional)
 
-5. **Run the development server**
-   ```bash
-   npm run dev
-   ```
+### Tooling and Deployment
 
-6. **Open your browser**
-   Navigate to [http://localhost:3000](http://localhost:3000)
+- ESLint + TypeScript type-checking
+- Vercel deployment
+- Vercel Analytics package integrated
 
-## API Endpoints
+## App Routes
 
-### Sessions
-- `GET /api/sessions?userId={id}` - Get user sessions
-- `POST /api/sessions` - Create new session
-- `PUT /api/sessions/{id}` - Update session
-- `DELETE /api/sessions/{id}` - Delete session
-- `POST /api/sessions/{id}/distractions` - Add distraction
+- `/` marketing/landing page
+- `/auth/signin` sign in page
+- `/auth/signup` sign up page
+- `/dashboard` focus timer workspace (protected)
+- `/history` session history (protected)
+- `/analytics` analytics dashboard (protected)
+- `/settings` settings management (protected)
+- `/profile` profile and achievements (protected)
+- `/demo` demo page
+- `/test` and `/test-camera` internal test pages
 
-### Analytics
-- `GET /api/analytics?userId={id}&period={week|month|year}` - Get analytics
-- `GET /api/analytics/daily?userId={id}&date={YYYY-MM-DD}` - Get daily analytics
+## API Routes
 
-### Settings
-- `GET /api/settings?userId={id}` - Get user settings
-- `POST /api/settings` - Create/update settings
+All protected routes require an authenticated session unless explicitly marked public.
 
-### Users
-- `GET /api/users?userId={id}` - Get user profile
-- `POST /api/users` - Create/update user profile
+| Route | Methods | Auth | Purpose |
+|---|---|---|---|
+| `/api/auth/[...nextauth]` | GET, POST | Public | NextAuth handlers |
+| `/api/auth/register` | POST | Public | Create account with credentials |
+| `/api/users` | GET, PUT, DELETE | Required | User profile CRUD |
+| `/api/users/me` | GET, PUT | Required | Current user profile/preference updates |
+| `/api/users/me/stats` | GET | Required | Dashboard/profile stats |
+| `/api/settings` | GET, PUT, DELETE | Required | User settings CRUD/reset |
+| `/api/sessions` | GET, POST | Required | List and create sessions |
+| `/api/sessions/[id]` | GET, PATCH, DELETE | Required | Session detail/update/delete |
+| `/api/sessions/[id]/distractions` | GET, POST | Required | Distraction events |
+| `/api/sessions/[id]/timeline` | GET | Required | Timeline samples (real/synthetic) |
+| `/api/sessions/[id]/insight` | POST | Required | AI insight generation |
+| `/api/analytics` | GET | Optional | Auth users get real analytics, guests receive demo data |
+| `/api/analytics/daily` | GET | Required | Daily analytics snapshot |
+| `/api/reports/weekly` | GET | Required | Weekly report generation |
+| `/api/achievements` | GET | Required | Achievement status/progress |
+| `/api/export` | GET | Required | Export session data (CSV/JSON) |
+| `/api/init` | POST | Token | Create MongoDB indexes |
+| `/api/test-mongodb` | GET | Dev only | Local DB diagnostics (disabled in production) |
 
-## Database Schema
+## Environment Variables
 
-### FocusSession
-```typescript
-{
-  userId: string
-  startTime: Date
-  endTime?: Date
-  duration: number // seconds
-  targetDuration: number // seconds
-  focusPercentage: number
-  distractionCount: number
-  isCompleted: boolean
-  sessionType: 'focus' | 'break' | 'long-break'
-  cameraEnabled: boolean
-  distractions: DistractionEvent[]
-  createdAt: Date
-  updatedAt: Date
-}
+Copy `.env.example` to `.env.local` for local development.
+
+Required for production:
+
+```env
+MONGODB_URI=
+NEXTAUTH_SECRET=
 ```
 
-### UserSettings
-```typescript
-{
-  userId: string
-  focusDuration: number // minutes
-  shortBreakDuration: number // minutes
-  longBreakDuration: number // minutes
-  longBreakInterval: number
-  cameraEnabled: boolean
-  notificationsEnabled: boolean
-  soundEnabled: boolean
-  theme: 'light' | 'dark' | 'system'
-  createdAt: Date
-  updatedAt: Date
-}
+Recommended:
+
+```env
+MONGODB_DB_NAME=focusflow
+NEXTAUTH_URL=https://your-vercel-domain.vercel.app
 ```
 
-### AnalyticsData
-```typescript
-{
-  userId: string
-  date: Date
-  totalFocusTime: number // seconds
-  totalSessions: number
-  completedSessions: number
-  averageFocusPercentage: number
-  totalDistractions: number
-  longestStreak: number // minutes
-  dailyGoal: number // minutes
-  goalAchieved: boolean
-  createdAt: Date
-  updatedAt: Date
-}
+Optional:
+
+```env
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+OPENAI_API_KEY=
+GOOGLE_API_KEY=
+INIT_API_TOKEN=
 ```
 
-## Usage
+Notes:
 
-1. **First Time Setup**
-   - Allow camera permissions when prompted
-   - Configure your focus session preferences in Settings
-   - Set up your camera for attention tracking
+- Keep secrets out of Git. Never commit `.env.local`.
+- `NEXTAUTH_URL` must be your deployed domain in production.
+- If both `OPENAI_API_KEY` and `GOOGLE_API_KEY` are empty, heuristic insights are used.
 
-2. **Starting a Focus Session**
-   - Click "Start Focus Session" on the main page
-   - The app will monitor your attention using your camera
-   - Focus percentage updates in real-time based on your attention
+## Local Development
 
-3. **Viewing Analytics**
-   - Navigate to the Analytics page to see your progress
-   - View weekly, monthly, or yearly trends
-   - Track your focus patterns and improvement over time
-
-4. **Settings**
-   - Customize focus and break durations
-   - Enable/disable camera tracking
-   - Adjust notification preferences
-   - Switch between light and dark themes
-
-## Development
-
-### Project Structure
-```
-├── app/                    # Next.js app directory
-│   ├── api/               # API routes
-│   ├── analytics/         # Analytics page
-│   ├── history/           # History page
-│   ├── settings/          # Settings page
-│   └── layout.tsx         # Root layout
-├── components/            # React components
-│   ├── ui/               # Reusable UI components
-│   └── *.tsx             # Feature components
-├── hooks/                # Custom React hooks
-├── lib/                  # Utility functions and API client
-└── styles/               # Global styles
-```
-
-### Adding New Features
-
-1. **API Endpoints**: Add new routes in `app/api/`
-2. **Components**: Create new components in `components/`
-3. **Hooks**: Add custom hooks in `hooks/`
-4. **Types**: Update models in `lib/models.ts`
-
-### Building for Production
+1. Clone and install dependencies:
 
 ```bash
-npm run build
-npm start
+git clone https://github.com/alokX01/focusflow.git
+cd focusflow
+npm install
 ```
 
-### Deploying to Vercel
+2. Configure environment values in `.env.local`.
 
-1. Push this repo to GitHub/GitLab/Bitbucket.
-2. Import the project in Vercel.
-3. In Vercel Project Settings -> Environment Variables, add:
-   - `MONGODB_URI`
-   - `NEXTAUTH_SECRET`
-   - `NEXTAUTH_URL` (for example `https://your-app.vercel.app`)
-   - Any optional variables you use (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `INIT_API_TOKEN`).
-4. Deploy. Vercel will run `npm run build` automatically.
-5. (Optional) Create indexes once after deploy:
-   - Send a `POST` request to `/api/init` with header `x-init-token: <INIT_API_TOKEN>`.
+3. Start development server:
 
-## Troubleshooting
+```bash
+npm run dev
+```
 
-### Camera Issues
-- Ensure your browser has camera permissions
-- Try refreshing the page if camera setup fails
-- Check that you're using HTTPS in production
+4. Open:
 
-### Database Connection
-- Verify your MongoDB Atlas connection string
-- Check that your IP is whitelisted
-- Ensure database user has proper permissions
+- http://localhost:3000
 
-### Performance
-- The app uses TensorFlow.js which can be resource-intensive
-- Consider reducing camera resolution for better performance
-- Close other browser tabs to free up resources
+## Available Scripts
 
-## Contributing
+```bash
+npm run dev        # start Next.js dev server
+npm run lint       # run ESLint
+npm run typecheck  # run TypeScript checks
+npm run build      # production build
+npm run check      # lint + typecheck + build
+npm run start      # run built app
+```
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+## Deployment (Vercel)
+
+This project currently uses a custom Next.js dist directory:
+
+- `distDir: ".next-build"` in `next.config.mjs`
+
+So in Vercel Project Settings:
+
+- Framework Preset: `Next.js`
+- Build Command: `next build` (or default)
+- Install Command: `npm install`
+- Output Directory: `.next-build`
+
+Then add required environment variables and deploy.
+
+### Common Vercel Error Fix
+
+If you see:
+
+`The Next.js output directory "Next.js default" was not found...`
+
+Set **Output Directory** to exactly:
+
+```txt
+.next-build
+```
+
+Do not put `Next.js default` as literal text.
+
+## Initialize MongoDB Indexes
+
+`/api/init` is protected by `INIT_API_TOKEN`.
+
+Example request:
+
+```bash
+curl -X POST https://your-domain.vercel.app/api/init -H "x-init-token: YOUR_INIT_API_TOKEN"
+```
+
+## Project Structure
+
+```text
+app/
+  api/                # server API routes
+  auth/               # sign-in / sign-up pages
+  dashboard/          # main focus workspace
+  analytics/          # analytics UI
+  history/            # session history UI
+  settings/           # settings UI
+  profile/            # profile and achievements
+components/
+  ui/                 # reusable UI building blocks
+  timer-interface.tsx
+  history-interface.tsx
+  analytics-dashboard.tsx
+lib/
+  auth.ts             # NextAuth config
+  mongodb.ts          # MongoDB client and DB helpers
+  mongodb-indexes.ts  # index creation utilities
+  models.ts           # shared interfaces
+hooks/
+scripts/
+```
+
+## Security Notes
+
+- Rotate any credential that was accidentally exposed in screenshots/messages.
+- Use long random secrets for `NEXTAUTH_SECRET` and `INIT_API_TOKEN`.
+- Keep production keys only in Vercel Environment Variables.
 
 ## License
 
-This project is licensed under the MIT License.
-
-## Support
-
-For support, please open an issue on GitHub or contact the development team.
+No license file is currently included in this repository.
