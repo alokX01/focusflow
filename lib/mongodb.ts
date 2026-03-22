@@ -1,11 +1,7 @@
 import { MongoClient, Db } from "mongodb";
 
-const uri = process.env.MONGODB_URI;
-const dbName = process.env.MONGODB_DB_NAME || "focusflow";
-
-if (!uri) {
-  throw new Error('Missing required environment variable: "MONGODB_URI"');
-}
+const uri = process.env.MONGODB_URI?.trim();
+const dbName = process.env.MONGODB_DB_NAME?.trim() || "focusflow";
 
 const options = {
   maxPoolSize: 10,
@@ -24,22 +20,35 @@ const globalForMongo = globalThis as typeof globalThis & {
   _mongoClientPromise?: Promise<MongoClient>;
 };
 
-if (!globalForMongo._mongoClientPromise) {
-  const client = new MongoClient(uri, options);
-  globalForMongo._mongoClientPromise = client.connect();
+function requireMongoUri(): string {
+  if (!uri) {
+    throw new Error('Missing required environment variable: "MONGODB_URI"');
+  }
+  return uri;
 }
 
-const clientPromise = globalForMongo._mongoClientPromise;
+export function getMongoClient(): Promise<MongoClient> {
+  if (!globalForMongo._mongoClientPromise) {
+    const client = new MongoClient(requireMongoUri(), options);
+    globalForMongo._mongoClientPromise = client.connect();
+  }
 
-export default clientPromise;
+  return globalForMongo._mongoClientPromise;
+}
+
+export default getMongoClient;
 
 export async function getDatabase(): Promise<Db> {
-  const client = await clientPromise;
+  const client = await getMongoClient();
   return client.db(dbName);
 }
 
 export async function closeDatabase(): Promise<void> {
-  const client = await clientPromise;
+  if (!globalForMongo._mongoClientPromise) {
+    return;
+  }
+
+  const client = await globalForMongo._mongoClientPromise;
   await client.close();
   globalForMongo._mongoClientPromise = undefined;
 }

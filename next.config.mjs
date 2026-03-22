@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Avoid local lock/permission issues on stale .next cache folders.
+  distDir: ".next-build",
+
   // Remove dangerous flags - catch errors early!
   eslint: {
     dirs: ["app", "components", "lib", "hooks"], // Only check app code
@@ -31,6 +34,7 @@ const nextConfig = {
 
   // Performance optimizations
   experimental: {
+    workerThreads: true,
     optimizePackageImports: ["@radix-ui/react-*", "recharts", "lucide-react"],
   },
 };

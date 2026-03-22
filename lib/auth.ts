@@ -3,7 +3,7 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
 import { MongoDBAdapter } from "@auth/mongodb-adapter";
 import { compare } from "bcryptjs";
-import clientPromise, { getDatabase } from "./mongodb";
+import { getDatabase, getMongoClient } from "./mongodb";
 
 const isAuthDebug = process.env.NEXTAUTH_DEBUG === "true";
 
@@ -67,7 +67,7 @@ if (hasGoogleProvider) {
 }
 
 export const authOptions: NextAuthOptions = {
-  adapter: MongoDBAdapter(clientPromise) as any,
+  adapter: MongoDBAdapter(getMongoClient) as any,
   providers,
   session: {
     strategy: "jwt",
