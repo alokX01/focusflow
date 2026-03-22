@@ -56,13 +56,6 @@ export function useFocusSession() {
     };
   }, [isRunning, isPaused, timeRemaining]);
 
-  // Auto-stop when time reaches 0
-  useEffect(() => {
-    if (timeRemaining === 0 && isRunning && session) {
-      stopSession();
-    }
-  }, [timeRemaining, isRunning, session]);
-
   const createSession = useCallback(async (data: Partial<FocusSession>) => {
     setLoading(true);
     setError(null);
@@ -219,6 +212,13 @@ export function useFocusSession() {
     distractionCount,
     completeSession,
   ]);
+
+  // Auto-stop when time reaches 0
+  useEffect(() => {
+    if (timeRemaining === 0 && isRunning && session) {
+      stopSession();
+    }
+  }, [timeRemaining, isRunning, session, stopSession]);
 
   const addDistraction = useCallback(
     async (type: string, severity: number, note?: string) => {

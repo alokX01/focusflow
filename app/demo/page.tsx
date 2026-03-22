@@ -92,7 +92,7 @@ export default function DashboardPage() {
           <Card>
             <CardHeader className="pb-2">
               <CardDescription className="flex items-center justify-between">
-                <span>Today's Progress</span>
+                <span>Today&apos;s Progress</span>
                 <Target className="h-4 w-4 text-muted-foreground" />
               </CardDescription>
             </CardHeader>
@@ -132,7 +132,7 @@ export default function DashboardPage() {
             <CardContent>
               <div className="text-2xl font-bold">{stats.streak} days</div>
               <p className="text-xs text-muted-foreground mt-2">
-                Don't break the chain!
+                Don&apos;t break the chain!
               </p>
             </CardContent>
           </Card>

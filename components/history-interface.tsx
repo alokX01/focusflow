@@ -656,7 +656,7 @@ export function HistoryInterface() {
                               <div className="bg-muted p-3 rounded-lg mb-3">
                                 <h3 className="font-semibold mb-2 flex items-center text-sm">
                                   <Sparkles className="w-4 h-4 mr-2 text-primary" />
-                                  AI Coach's Insight
+                                  AI Coach&apos;s Insight
                                 </h3>
                                 {isGeneratingInsight ? (
                                   <div className="flex items-center text-sm text-muted-foreground">
@@ -905,7 +905,7 @@ export function HistoryInterface() {
                                     <div className="bg-muted p-4 rounded-lg mb-4">
                                       <h3 className="font-semibold mb-2 flex items-center">
                                         <Sparkles className="w-4 h-4 mr-2 text-primary" />
-                                        AI Coach's Insight
+                                        AI Coach&apos;s Insight
                                       </h3>
                                       {isGeneratingInsight ? (
                                         <div className="flex items-center text-sm text-muted-foreground">

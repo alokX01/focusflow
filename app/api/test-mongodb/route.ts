@@ -11,6 +11,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
+    if (process.env.NODE_ENV === "production") {
+      return apiError("Not found", 404);
+    }
+
     const { searchParams } = new URL(request.url);
     const action = searchParams.get("action");
 

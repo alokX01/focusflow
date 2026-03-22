@@ -180,8 +180,8 @@ export default function TestCameraPage() {
           <div className="text-sm text-muted-foreground space-y-2">
             <p className="font-medium">📝 Test Steps:</p>
             <ol className="list-decimal list-inside space-y-1">
-              <li>Click "1. Test Camera" and allow camera access</li>
-              <li>Once video appears, click "2. Test Face Detection"</li>
+              <li>Click &quot;1. Test Camera&quot; and allow camera access</li>
+              <li>Once video appears, click &quot;2. Test Face Detection&quot;</li>
               <li>Check the console logs for any errors</li>
               <li>Paste all logs here if issues occur</li>
             </ol>

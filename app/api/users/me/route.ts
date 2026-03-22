@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { getDatabase } from "@/lib/mongodb";
 import { authOptions } from "@/lib/auth";
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
 
@@ -11,7 +11,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const userId = (session.user as any).id || session.user.email;
+    const userId = (session.user as any).id
+      ? String((session.user as any).id)
+      : "";
+    const email = session.user.email?.toLowerCase() || "";
+    const canonicalUserId = userId || email;
+
     const db = await getDatabase();
 
     const user = await db
@@ -22,6 +27,25 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
+    let settings = canonicalUserId
+      ? await db.collection("userSettings").findOne({ userId: canonicalUserId })
+      : null;
+
+    if (!settings && email && email !== canonicalUserId) {
+      settings = await db.collection("userSettings").findOne({ userId: email });
+    }
+
+    const preferences = {
+      ...(user.preferences || {}),
+      focusGoal: Number(
+        settings?.focusDuration ?? user.preferences?.focusGoal ?? 25
+      ),
+      breakDuration: Number(
+        settings?.shortBreakDuration ?? user.preferences?.breakDuration ?? 5
+      ),
+      dailyTarget: Number(user.preferences?.dailyTarget ?? 4),
+    };
+
     return NextResponse.json({
       user: {
         id: user._id.toString(),
@@ -30,7 +54,7 @@ export async function GET(request: NextRequest) {
         image: user.image || user.avatar || null,
         createdAt: user.createdAt || null,
         updatedAt: user.updatedAt || null,
-        preferences: user.preferences || {},
+        preferences,
       },
     });
   } catch (error) {
@@ -52,6 +76,11 @@ export async function PUT(request: NextRequest) {
 
     const body = await request.json();
     const { name, focusGoal, breakDuration, dailyTarget } = body;
+    const userId = (session.user as any).id
+      ? String((session.user as any).id)
+      : "";
+    const email = session.user.email?.toLowerCase() || "";
+    const canonicalUserId = userId || email;
 
     const db = await getDatabase();
 
@@ -72,9 +101,44 @@ export async function PUT(request: NextRequest) {
       updateData["preferences.dailyTarget"] = dailyTarget;
     }
 
-    const result = await db
-      .collection("users")
-      .updateOne({ email: session.user.email }, { $set: updateData });
+    const updates: Promise<any>[] = [
+      db.collection("users").updateOne(
+        { email: session.user.email },
+        { $set: updateData }
+      ),
+    ];
+
+    const settingsUpdate: Record<string, number> = {};
+    if (typeof focusGoal === "number") {
+      settingsUpdate.focusDuration = Math.max(5, Math.min(120, focusGoal));
+    }
+    if (typeof breakDuration === "number") {
+      settingsUpdate.shortBreakDuration = Math.max(
+        1,
+        Math.min(30, breakDuration)
+      );
+    }
+
+    if (canonicalUserId && Object.keys(settingsUpdate).length > 0) {
+      updates.push(
+        db.collection("userSettings").updateOne(
+          { userId: canonicalUserId },
+          {
+            $set: {
+              ...settingsUpdate,
+              userId: canonicalUserId,
+              updatedAt: new Date(),
+            },
+            $setOnInsert: {
+              createdAt: new Date(),
+            },
+          },
+          { upsert: true }
+        )
+      );
+    }
+
+    const [result] = await Promise.all(updates);
 
     if (result.matchedCount === 0) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });

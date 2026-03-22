@@ -18,6 +18,7 @@ const TimelineSampleSchema = z.object({
 // Session update schema
 const UpdateSessionSchema = z.object({
   duration: z.number().min(0).optional(),
+  focusedTime: z.number().min(0).optional(),
   focusPercentage: z.number().min(0).max(100).optional(),
   distractionCount: z.number().min(0).optional(),
   isCompleted: z.boolean().optional(),

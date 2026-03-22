@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { signIn, useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
@@ -41,7 +41,7 @@ const SignupSchema = z.object({
     .regex(/[0-9]/, "Must contain number"),
 });
 
-export default function SignUpPage() {
+function SignUpContent() {
   const router = useRouter();
   const params = useSearchParams();
   const { status } = useSession();
@@ -55,6 +55,7 @@ export default function SignUpPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -62,6 +63,27 @@ export default function SignUpPage() {
       router.replace(callbackUrl);
     }
   }, [status, router, callbackUrl]);
+
+  useEffect(() => {
+    let ignore = false;
+
+    fetch("/api/auth/providers")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((providers) => {
+        if (!ignore) {
+          setGoogleEnabled(Boolean(providers?.google));
+        }
+      })
+      .catch(() => {
+        if (!ignore) {
+          setGoogleEnabled(false);
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -139,6 +161,8 @@ export default function SignUpPage() {
   };
 
   const handleGoogleSignUp = async () => {
+    if (!googleEnabled) return;
+
     setIsGoogleLoading(true);
     try {
       await signIn("google", { callbackUrl });
@@ -354,31 +378,35 @@ export default function SignUpPage() {
               </Button>
             </form>
 
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t" />
+            {googleEnabled && (
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-background px-2 text-muted-foreground">
+                    Or continue with
+                  </span>
+                </div>
               </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-background px-2 text-muted-foreground">
-                  Or continue with
-                </span>
-              </div>
-            </div>
+            )}
 
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={handleGoogleSignUp}
-              disabled={isLoading || isGoogleLoading}
-              size="lg"
-            >
-              {isGoogleLoading ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Chrome className="mr-2 h-4 w-4" />
-              )}
-              Google
-            </Button>
+            {googleEnabled && (
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={handleGoogleSignUp}
+                disabled={isLoading || isGoogleLoading}
+                size="lg"
+              >
+                {isGoogleLoading ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Chrome className="mr-2 h-4 w-4" />
+                )}
+                Google
+              </Button>
+            )}
 
             <div className="text-center text-sm">
               <span className="text-muted-foreground">
@@ -411,5 +439,21 @@ export default function SignUpPage() {
         </motion.p>
       </motion.div>
     </div>
+  );
+}
+
+function SignUpFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+    </div>
+  );
+}
+
+export default function SignUpPage() {
+  return (
+    <Suspense fallback={<SignUpFallback />}>
+      <SignUpContent />
+    </Suspense>
   );
 }

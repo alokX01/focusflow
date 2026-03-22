@@ -6,9 +6,14 @@
     "build": "next build",
     "dev": "next dev",
     "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run lint && npm run typecheck && npm run build",
     "start": "next start",
-    "clean": "rm -rf .next && rm -rf node_modules && npm install",
-    "clean:cache": "rm -rf .next"
+    "clean": "node -e \"const fs=require('fs');fs.rmSync('.next',{recursive:true,force:true});fs.rmSync('node_modules',{recursive:true,force:true});\" && npm install",
+    "clean:cache": "node -e \"const fs=require('fs');fs.rmSync('.next',{recursive:true,force:true});\""
+  },
+  "engines": {
+    "node": ">=18.18.0"
   },
   "dependencies": {
     "@auth/mongodb-adapter": "^3.11.0",
@@ -80,6 +85,8 @@
     "@types/node": "^22",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "14.2.16",
     "postcss": "^8.4.49",
     "prisma": "^6.18.0",
     "tailwindcss": "^4.1.9",

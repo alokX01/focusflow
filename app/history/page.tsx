@@ -11,7 +11,7 @@ export default function HistoryPage() {
             Session History
           </h1>
           <p className="text-muted-foreground">
-            Track your focus journey and see how you've improved over time
+            Track your focus journey and see how you&apos;ve improved over time
           </p>
         </div>
         <HistoryInterface />

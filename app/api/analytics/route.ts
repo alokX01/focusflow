@@ -292,6 +292,11 @@ async function calculateStreak(db: any, userId: string) {
   date.setHours(0, 0, 0, 0);
   let streak = 0;
 
+  const todayKey = date.toISOString().split("T")[0];
+  if (!sessionDates.has(todayKey)) {
+    date.setDate(date.getDate() - 1);
+  }
+
   while (true) {
     const key = date.toISOString().split("T")[0];
     if (!sessionDates.has(key)) break;
@@ -335,11 +340,75 @@ async function getRecentSessionTimeline(db: any, userId: string) {
     {
       userId,
       isArchived: { $ne: true },
+      isCompleted: true,
       timeline: { $exists: true, $ne: [] },
     },
-    { sort: { startTime: -1 } }
+    { sort: { startTime: -1 }, projection: { timeline: 1 } }
   );
-  return Array.isArray(latest?.timeline) ? latest.timeline : [];
+
+  const raw = Array.isArray(latest?.timeline) ? latest.timeline : [];
+  if (raw.length > 0) {
+    return downsampleTimeline(raw);
+  }
+
+  const latestCompleted = await db.collection("sessions").findOne(
+    {
+      userId,
+      isArchived: { $ne: true },
+      isCompleted: true,
+    },
+    {
+      sort: { startTime: -1 },
+      projection: { duration: 1, focusPercentage: 1, distractionCount: 1 },
+    }
+  );
+
+  if (!latestCompleted) return [];
+
+  return buildSyntheticTimeline(
+    Number(latestCompleted.duration || 0),
+    Number(latestCompleted.focusPercentage || 0),
+    Number(latestCompleted.distractionCount || 0)
+  );
+}
+
+function downsampleTimeline(timeline: any[]) {
+  const maxPoints = 1200;
+  const step = timeline.length > maxPoints ? Math.ceil(timeline.length / maxPoints) : 1;
+  return step > 1 ? timeline.filter((_: any, i: number) => i % step === 0) : timeline;
+}
+
+function buildSyntheticTimeline(
+  durationSec: number,
+  focusPercentage: number,
+  distractionCount: number
+) {
+  const duration = Math.max(60, Math.round(durationSec || 0));
+  const points = Math.min(300, Math.max(20, Math.ceil(duration / 5)));
+  const step = Math.max(1, Math.floor(duration / points));
+  const focusedTarget = Math.round(
+    (Math.max(0, Math.min(100, focusPercentage)) / 100) * points
+  );
+  const offBlocks = Math.max(1, Math.min(points, distractionCount || 1));
+  const offStride = Math.max(2, Math.floor(points / offBlocks));
+
+  const samples: Array<{ t: number; focused: boolean; confidence: number }> = [];
+
+  for (let i = 0; i < points; i++) {
+    const t = Math.min(duration, i * step);
+    const inFocusBudget = i < focusedTarget;
+    const distractorPulse =
+      (i % offStride === 0 && i > 0) || (i % offStride === 1 && i > 0);
+    const focused = inFocusBudget && !distractorPulse;
+
+    samples.push({
+      t,
+      focused,
+      confidence: focused ? 0.8 : 0.3,
+    });
+  }
+
+  return samples;
 }
 
 function getDemoData(period: string) {

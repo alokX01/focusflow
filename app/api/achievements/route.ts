@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { getDatabase } from "@/lib/mongodb";
 import { authOptions } from "@/lib/auth";
-import { z } from "zod";
 
 // ============================================
 // ACHIEVEMENT DEFINITIONS
@@ -172,6 +171,11 @@ export async function GET(request: NextRequest) {
       userAchievements
     );
 
+    const unlockedIds = new Set<string>([
+      ...userAchievements.map((ua) => String(ua.achievementId)),
+      ...newAchievements.map((a) => a.id),
+    ]);
+
     // Map achievements with progress
     const allAchievements = ACHIEVEMENTS.map((achievement) => {
       const userAch = userAchievements.find(
@@ -179,12 +183,11 @@ export async function GET(request: NextRequest) {
       );
       return {
         ...achievement,
-        unlocked: !!userAch,
+        unlocked: unlockedIds.has(achievement.id),
         unlockedAt: userAch?.unlockedAt || null,
         progress: getAchievementProgress(
           achievement.id,
-          stats,
-          achievement.target
+          stats
         ),
       };
     });
@@ -197,10 +200,10 @@ export async function GET(request: NextRequest) {
     }, {} as Record<string, typeof allAchievements>);
 
     // Calculate totals
-    const totalPoints = userAchievements.reduce((sum, ua) => {
-      const ach = ACHIEVEMENTS.find((a) => a.id === ua.achievementId);
-      return sum + (ach?.points || 0);
-    }, 0);
+    const totalPoints = ACHIEVEMENTS.reduce(
+      (sum, ach) => (unlockedIds.has(ach.id) ? sum + ach.points : sum),
+      0
+    );
 
     const level = Math.floor(totalPoints / 100) + 1;
     const nextLevelPoints = level * 100;
@@ -215,7 +218,7 @@ export async function GET(request: NextRequest) {
         level,
         nextLevelPoints,
         progressToNextLevel,
-        unlockedCount: userAchievements.length,
+        unlockedCount: unlockedIds.size,
         totalCount: ACHIEVEMENTS.length,
       },
     });
@@ -236,9 +239,9 @@ async function getUserStats(db: any, userId: string) {
   const now = new Date();
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-  // Aggregate stats in single query
+  // Aggregate stats in one query without loading all sessions in memory
   const pipeline = [
-    { $match: { userId, isCompleted: true } },
+    { $match: { userId, isCompleted: true, isArchived: { $ne: true } } },
     {
       $facet: {
         totals: [
@@ -247,7 +250,7 @@ async function getUserStats(db: any, userId: string) {
               _id: null,
               totalSessions: { $sum: 1 },
               perfectFocus: {
-                $sum: { $cond: [{ $eq: ["$focusPercentage", 100] }, 1, 0] },
+                $sum: { $cond: [{ $gte: ["$focusPercentage", 100] }, 1, 0] },
               },
               noDistractions: {
                 $sum: { $cond: [{ $eq: ["$distractionCount", 0] }, 1, 0] },
@@ -256,16 +259,25 @@ async function getUserStats(db: any, userId: string) {
             },
           },
         ],
-        timeBasedSessions: [
+        timeStats: [
           {
-            $project: {
-              hour: { $hour: "$startTime" },
-              createdAt: 1,
+            $group: {
+              _id: null,
+              earlyBirdSessions: {
+                $sum: {
+                  $cond: [{ $lt: [{ $hour: "$startTime" }, 6] }, 1, 0],
+                },
+              },
+              nightOwlSessions: {
+                $sum: {
+                  $cond: [{ $gte: [{ $hour: "$startTime" }, 22] }, 1, 0],
+                },
+              },
             },
           },
         ],
         weeklyAverage: [
-          { $match: { createdAt: { $gte: weekAgo } } },
+          { $match: { startTime: { $gte: weekAgo } } },
           {
             $group: {
               _id: null,
@@ -281,7 +293,7 @@ async function getUserStats(db: any, userId: string) {
   const data = results[0];
 
   const totals = data.totals[0] || {};
-  const timeBasedSessions = data.timeBasedSessions || [];
+  const timeStats = data.timeStats[0] || {};
   const weeklyAvg = data.weeklyAverage[0] || {};
 
   return {
@@ -289,18 +301,14 @@ async function getUserStats(db: any, userId: string) {
     perfectFocusSessions: totals.perfectFocus || 0,
     noDistractionSessions: totals.noDistractions || 0,
     longestSession: totals.maxDuration || 0,
-    earlyBirdSessions: timeBasedSessions.filter((s: any) => s.hour < 6).length,
-    nightOwlSessions: timeBasedSessions.filter((s: any) => s.hour >= 22).length,
+    earlyBirdSessions: timeStats.earlyBirdSessions || 0,
+    nightOwlSessions: timeStats.nightOwlSessions || 0,
     weeklyFocusAverage: Math.round(weeklyAvg.avgFocus || 0),
     currentStreak: await calculateStreak(db, userId),
   };
 }
 
-function getAchievementProgress(
-  achievementId: string,
-  stats: any,
-  target?: number
-): number {
+function getAchievementProgress(achievementId: string, stats: any): number {
   const progressMap: Record<string, number> = {
     first_session: Math.min((stats.totalSessions / 1) * 100, 100),
     sessions_10: Math.min((stats.totalSessions / 10) * 100, 100),
@@ -364,20 +372,28 @@ async function checkAndUnlockAchievements(
   }
 
   if (toInsert.length > 0) {
-    await db.collection("userAchievements").insertMany(toInsert);
+    try {
+      await db.collection("userAchievements").insertMany(toInsert, {
+        ordered: false,
+      });
+    } catch (error: any) {
+      if (error?.code !== 11000) {
+        throw error;
+      }
+    }
   }
 
   return newAchievements;
 }
 
 async function calculateStreak(db: any, userId: string): Promise<number> {
-  // Optimized: Only get unique dates, not all sessions
+  // Optimized: Only get unique dates and compute streak from a Set lookup
   const pipeline = [
-    { $match: { userId, isCompleted: true } },
+    { $match: { userId, isCompleted: true, isArchived: { $ne: true } } },
     {
       $group: {
         _id: {
-          $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+          $dateToString: { format: "%Y-%m-%d", date: "$startTime" },
         },
       },
     },
@@ -392,22 +408,21 @@ async function calculateStreak(db: any, userId: string): Promise<number> {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  let streak = 0;
+  const daySet = new Set(dates.map((d: { _id: string }) => d._id));
   let currentDate = new Date(today);
+  const todayKey = currentDate.toISOString().split("T")[0];
+  if (!daySet.has(todayKey)) {
+    currentDate.setDate(currentDate.getDate() - 1);
+  }
 
+  let streak = 0;
   for (let i = 0; i < 365; i++) {
     const dateStr = currentDate.toISOString().split("T")[0];
-    const hasSession = dates.some((d: { _id: string }) => d._id === dateStr);
-
-    if (hasSession) {
+    if (daySet.has(dateStr)) {
       streak++;
       currentDate.setDate(currentDate.getDate() - 1);
-    } else if (i > 0) {
-      // Allow for today to not have a session yet
-      break;
     } else {
-      // Check yesterday if today doesn't have a session
-      currentDate.setDate(currentDate.getDate() - 1);
+      break;
     }
   }
 

@@ -234,6 +234,22 @@ export function TimerInterface({
   );
   const initInProgressRef = useRef(false);
   const lastFocusedRef = useRef(false); // NEW: last known focus state
+  const isRunningRef = useRef(false);
+  const isPausedRef = useRef(false);
+  const pauseReasonRef = useRef<PauseReason>(null);
+  const sessionTypeRef = useRef<SessionType>("focus");
+  const sessionStartMsRef = useRef<number>(0);
+  const lastTimelineSecondRef = useRef<number>(-1);
+  const timelineSamplesRef = useRef<
+    Array<{ t: number; focused: boolean; confidence?: number }>
+  >([]);
+
+  useEffect(() => {
+    isRunningRef.current = isRunning;
+    isPausedRef.current = isPaused;
+    pauseReasonRef.current = pauseReason;
+    sessionTypeRef.current = sessionType;
+  }, [isRunning, isPaused, pauseReason, sessionType]);
 
   // Load recent tasks
   useEffect(() => {
@@ -354,6 +370,11 @@ export function TimerInterface({
   const subscribeSnapshots = useCallback(() => {
     if (unsubRef.current) unsubRef.current();
     unsubRef.current = subscribeFaceFocus((snap: FaceFocusSnapshot) => {
+      const running = isRunningRef.current;
+      const paused = isPausedRef.current;
+      const currentPauseReason = pauseReasonRef.current;
+      const currentSessionType = sessionTypeRef.current;
+
       setFaceDetected(snap.faceDetected);
       setIsLookingAtScreen(snap.isLookingAtScreen);
       drawOverlay(snap);
@@ -372,7 +393,25 @@ export function TimerInterface({
       const focusedNow =
         snap.faceDetected && snap.isLookingAtScreen && meetsConf;
 
-      if (!isPaused && sessionType === "focus") {
+      if (running && currentSessionType === "focus" && sessionStartMsRef.current) {
+        const elapsedSec = Math.max(
+          0,
+          Math.floor((Date.now() - sessionStartMsRef.current) / 1000)
+        );
+        if (elapsedSec !== lastTimelineSecondRef.current) {
+          timelineSamplesRef.current.push({
+            t: elapsedSec,
+            focused: focusedNow,
+            confidence: Math.max(0, Math.min(1, (snap.confidence || 0) / 100)),
+          });
+          if (timelineSamplesRef.current.length > 7200) {
+            timelineSamplesRef.current.shift();
+          }
+          lastTimelineSecondRef.current = elapsedSec;
+        }
+      }
+
+      if (!paused && currentSessionType === "focus") {
         setFocusPercentage((prev) => {
           const gain = settings.focusGainPerSec;
           const loss = snap.faceDetected
@@ -387,7 +426,7 @@ export function TimerInterface({
       lastFocusedRef.current = focusedNow;
 
       // Distraction detection (throttle)
-      if (!focusedNow && sessionType === "focus") {
+      if (!focusedNow && currentSessionType === "focus") {
         const t = Date.now();
         if (t - lastDistractionRef.current > 5000) {
           lastDistractionRef.current = t;
@@ -398,11 +437,13 @@ export function TimerInterface({
         // Auto-pause
         if (
           settings.pauseOnDistraction &&
-          isRunning &&
-          !isPaused &&
+          running &&
+          !paused &&
           !distractionTimerRef.current
         ) {
           distractionTimerRef.current = setTimeout(() => {
+            isPausedRef.current = true;
+            pauseReasonRef.current = "auto";
             setIsPaused(true);
             setPauseReason("auto");
             playSound("pause", settings.soundEnabled);
@@ -417,7 +458,13 @@ export function TimerInterface({
           distractionTimerRef.current = null;
         }
         // Auto-resume
-        if (settings.pauseOnDistraction && isPaused && pauseReason === "auto") {
+        if (
+          settings.pauseOnDistraction &&
+          paused &&
+          currentPauseReason === "auto"
+        ) {
+          isPausedRef.current = false;
+          pauseReasonRef.current = null;
           setIsPaused(false);
           setPauseReason(null);
           toast({ title: "Auto-resumed" });
@@ -426,10 +473,6 @@ export function TimerInterface({
     });
   }, [
     drawOverlay,
-    isPaused,
-    isRunning,
-    pauseReason,
-    sessionType,
     settings.minFocusConfidence,
     settings.focusGainPerSec,
     settings.defocusLossPerSec,
@@ -567,6 +610,7 @@ export function TimerInterface({
   const handleStartSession = async (data: TaskModalData) => {
     setIsModalOpen(false);
     setSessionType(data.sessionType);
+    sessionTypeRef.current = data.sessionType;
     setCurrentTask(data.task || "");
 
     let duration = settings.focusDuration * 60;
@@ -580,10 +624,16 @@ export function TimerInterface({
     setIsRunning(true);
     setIsPaused(false);
     setPauseReason(null);
+    isRunningRef.current = true;
+    isPausedRef.current = false;
+    pauseReasonRef.current = null;
     setFocusPercentage(100);
     setDistractionCount(0);
     setFocusedTimeSec(0);
     lastFocusedRef.current = false;
+    sessionStartMsRef.current = Date.now();
+    lastTimelineSecondRef.current = -1;
+    timelineSamplesRef.current = [];
 
     // Save recent task
     if (data.task && data.task.trim()) {
@@ -633,6 +683,8 @@ export function TimerInterface({
   };
 
   const handlePause = () => {
+    isPausedRef.current = true;
+    pauseReasonRef.current = "manual";
     setIsPaused(true);
     setPauseReason("manual");
     playSound("pause", settings.soundEnabled);
@@ -644,6 +696,8 @@ export function TimerInterface({
   };
 
   const handleResume = () => {
+    isPausedRef.current = false;
+    pauseReasonRef.current = null;
     setIsPaused(false);
     setPauseReason(null);
     playSound("start", settings.soundEnabled);
@@ -658,10 +712,17 @@ export function TimerInterface({
     const durationSec = wasCompleted
       ? targetDuration
       : targetDuration - timeLeft;
+    const timelinePayload =
+      sessionType === "focus"
+        ? timelineSamplesRef.current.filter((s) => s.t <= durationSec)
+        : [];
 
     setIsRunning(false);
     setIsPaused(false);
     setPauseReason(null);
+    isRunningRef.current = false;
+    isPausedRef.current = false;
+    pauseReasonRef.current = null;
     lastFocusedRef.current = false;
 
     // Stop detection
@@ -695,6 +756,7 @@ export function TimerInterface({
             focusedTime: Math.round(focusedTimeSec),
             focusPercentage,
             distractionCount,
+            timeline: timelinePayload,
             isCompleted: wasCompleted,
             endTime: new Date().toISOString(),
           }),
@@ -716,6 +778,9 @@ export function TimerInterface({
     }
 
     setSessionId(null);
+    sessionStartMsRef.current = 0;
+    lastTimelineSecondRef.current = -1;
+    timelineSamplesRef.current = [];
 
     // Pomodoro auto cycle
     if (wasCompleted && sessionType === "focus") {

@@ -1,22 +1,28 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { Header } from "@/components/header";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { toast } from "@/hooks/use-toast";
 import {
   User,
   Calendar,
   Target,
-  TrendingUp,
   Award,
   Clock,
   Camera,
@@ -53,6 +59,27 @@ type Stats = {
   weeklyAverage: number;
 };
 
+type Achievement = {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  points: number;
+  icon?: string;
+  unlocked: boolean;
+  progress: number;
+  unlockedAt?: string | null;
+};
+
+type AchievementStats = {
+  totalPoints: number;
+  level: number;
+  nextLevelPoints: number;
+  progressToNextLevel: number;
+  unlockedCount: number;
+  totalCount: number;
+};
+
 const DEFAULT_FORM: ProfileForm = {
   name: "",
   email: "",
@@ -73,6 +100,15 @@ const DEFAULT_STATS: Stats = {
   weeklyAverage: 0,
 };
 
+const DEFAULT_ACHIEVEMENT_STATS: AchievementStats = {
+  totalPoints: 0,
+  level: 1,
+  nextLevelPoints: 100,
+  progressToNextLevel: 0,
+  unlockedCount: 0,
+  totalCount: 0,
+};
+
 export default function ProfilePage() {
   const { data: session, status } = useSession();
   const router = useRouter();
@@ -83,44 +119,51 @@ export default function ProfilePage() {
   const [stats, setStats] = useState<Stats>(DEFAULT_STATS);
   const [userMeta, setUserMeta] = useState<UserMeta>({});
   const [formData, setFormData] = useState<ProfileForm>(DEFAULT_FORM);
-  const [initialFormData, setInitialFormData] = useState<ProfileForm>(DEFAULT_FORM);
+  const [initialFormData, setInitialFormData] = useState<ProfileForm>(
+    DEFAULT_FORM
+  );
+  const [achievements, setAchievements] = useState<Achievement[]>([]);
+  const [achievementStats, setAchievementStats] = useState<AchievementStats>(
+    DEFAULT_ACHIEVEMENT_STATS
+  );
 
-  useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push("/auth/signin");
-      return;
-    }
-
-    if (session?.user) {
-      loadProfileData();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, status, router]);
-
-  const loadProfileData = async () => {
+  const loadProfileData = useCallback(async () => {
     setIsLoadingData(true);
     try {
-      await Promise.all([fetchUserProfile(), fetchUserStats()]);
-    } finally {
-      setIsLoadingData(false);
-    }
-  };
+      const [profileRes, statsRes, settingsRes, achievementsRes] =
+        await Promise.all([
+          fetch("/api/users/me", { cache: "no-store" }),
+          fetch("/api/users/me/stats", { cache: "no-store" }),
+          fetch("/api/settings", { cache: "no-store" }),
+          fetch("/api/achievements", { cache: "no-store" }),
+        ]);
 
-  const fetchUserProfile = async () => {
-    try {
-      const response = await fetch("/api/users/me", { cache: "no-store" });
-      if (!response.ok) return;
+      const profileData = profileRes.ok ? await profileRes.json() : {};
+      const statsData = statsRes.ok ? await statsRes.json() : {};
+      const settingsData = settingsRes.ok ? await settingsRes.json() : {};
+      const achievementsData = achievementsRes.ok
+        ? await achievementsRes.json()
+        : {};
 
-      const data = await response.json();
-      const user = data?.user || {};
+      const user = profileData?.user || {};
       const preferences = user?.preferences || {};
+      const settings = settingsData?.data?.settings || {};
+      const parsedStats = statsData?.data || statsData;
 
       const nextForm: ProfileForm = {
         name: user?.name || session?.user?.name || "",
         email: user?.email || session?.user?.email || "",
-        focusGoal: Number(preferences.focusGoal ?? DEFAULT_FORM.focusGoal),
-        breakDuration: Number(preferences.breakDuration ?? DEFAULT_FORM.breakDuration),
-        dailyTarget: Number(preferences.dailyTarget ?? DEFAULT_FORM.dailyTarget),
+        focusGoal: Number(
+          settings?.focusDuration ?? preferences.focusGoal ?? DEFAULT_FORM.focusGoal
+        ),
+        breakDuration: Number(
+          settings?.shortBreakDuration ??
+            preferences.breakDuration ??
+            DEFAULT_FORM.breakDuration
+        ),
+        dailyTarget: Number(
+          preferences.dailyTarget ?? DEFAULT_FORM.dailyTarget
+        ),
       };
 
       setFormData(nextForm);
@@ -131,41 +174,47 @@ export default function ProfilePage() {
         createdAt: user?.createdAt || null,
         updatedAt: user?.updatedAt || null,
       });
+
+      setStats({
+        totalSessions: parsedStats?.totalSessions || 0,
+        totalFocusTime: parsedStats?.totalFocusTime || 0,
+        averageFocus: parsedStats?.averageFocus || 0,
+        currentStreak: parsedStats?.currentStreak || 0,
+        bestStreak: parsedStats?.bestStreak || parsedStats?.currentStreak || 0,
+        todaySessions: parsedStats?.todaySessions || 0,
+        todayMinutes: parsedStats?.todayMinutes || 0,
+        todayFocus: parsedStats?.todayFocus || 0,
+        weeklyAverage: parsedStats?.weeklyAverage || 0,
+      });
+
+      setAchievements(
+        Array.isArray(achievementsData?.achievements)
+          ? achievementsData.achievements
+          : []
+      );
+      setAchievementStats(
+        achievementsData?.stats || DEFAULT_ACHIEVEMENT_STATS
+      );
     } catch (error) {
-      console.error("Error fetching profile:", error);
+      console.error("Error loading profile:", error);
       toast({
         title: "Could not load profile details",
         variant: "destructive",
       });
+    } finally {
+      setIsLoadingData(false);
     }
-  };
+  }, [session?.user?.email, session?.user?.name]);
 
-  const fetchUserStats = async () => {
-    try {
-      const response = await fetch("/api/users/me/stats", { cache: "no-store" });
-      if (!response.ok) return;
-
-      const data = await response.json();
-      const parsed = data?.data || data;
-      setStats({
-        totalSessions: parsed?.totalSessions || 0,
-        totalFocusTime: parsed?.totalFocusTime || 0,
-        averageFocus: parsed?.averageFocus || 0,
-        currentStreak: parsed?.currentStreak || 0,
-        bestStreak: parsed?.bestStreak || parsed?.currentStreak || 0,
-        todaySessions: parsed?.todaySessions || 0,
-        todayMinutes: parsed?.todayMinutes || 0,
-        todayFocus: parsed?.todayFocus || 0,
-        weeklyAverage: parsed?.weeklyAverage || 0,
-      });
-    } catch (error) {
-      console.error("Error fetching stats:", error);
-      toast({
-        title: "Could not load profile stats",
-        variant: "destructive",
-      });
+  useEffect(() => {
+    if (status === "unauthenticated") {
+      router.push("/auth/signin");
+      return;
     }
-  };
+    if (status === "authenticated") {
+      loadProfileData();
+    }
+  }, [status, router, loadProfileData]);
 
   const clamp = (value: number, min: number, max: number) =>
     Math.min(max, Math.max(min, value));
@@ -177,11 +226,14 @@ export default function ProfilePage() {
     const raw = Number(value);
     if (!Number.isFinite(raw)) return;
     if (key === "focusGoal") {
-      setFormData((prev) => ({ ...prev, focusGoal: clamp(Math.round(raw), 1, 90) }));
+      setFormData((prev) => ({ ...prev, focusGoal: clamp(Math.round(raw), 5, 120) }));
       return;
     }
     if (key === "breakDuration") {
-      setFormData((prev) => ({ ...prev, breakDuration: clamp(Math.round(raw), 1, 30) }));
+      setFormData((prev) => ({
+        ...prev,
+        breakDuration: clamp(Math.round(raw), 1, 30),
+      }));
       return;
     }
     setFormData((prev) => ({ ...prev, dailyTarget: clamp(Math.round(raw), 1, 20) }));
@@ -194,23 +246,38 @@ export default function ProfilePage() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      const response = await fetch("/api/users/me", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: formData.name.trim(),
-          focusGoal: formData.focusGoal,
-          breakDuration: formData.breakDuration,
-          dailyTarget: formData.dailyTarget,
+      const [profileRes, settingsRes] = await Promise.all([
+        fetch("/api/users/me", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: formData.name.trim(),
+            dailyTarget: formData.dailyTarget,
+            focusGoal: formData.focusGoal,
+            breakDuration: formData.breakDuration,
+          }),
         }),
-      });
+        fetch("/api/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            focusDuration: formData.focusGoal,
+            shortBreakDuration: formData.breakDuration,
+          }),
+        }),
+      ]);
 
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data?.error || "Failed to save profile");
+      if (!profileRes.ok || !settingsRes.ok) {
+        const profileErr = await profileRes.json().catch(() => ({}));
+        const settingsErr = await settingsRes.json().catch(() => ({}));
+        throw new Error(
+          profileErr?.error ||
+            settingsErr?.error ||
+            "Failed to save profile settings"
+        );
       }
 
-      setInitialFormData(formData);
+      await loadProfileData();
       setIsEditing(false);
       toast({ title: "Profile updated successfully" });
       router.refresh();
@@ -245,45 +312,6 @@ export default function ProfilePage() {
   const memberSince = userMeta.createdAt
     ? new Date(userMeta.createdAt).toLocaleDateString()
     : "N/A";
-
-  const achievements = [
-    {
-      name: "First Focus",
-      description: "Complete your first session",
-      unlocked: stats.totalSessions >= 1,
-      icon: Target,
-    },
-    {
-      name: "Week Warrior",
-      description: "Reach a 7 day streak",
-      unlocked: stats.currentStreak >= 7 || stats.bestStreak >= 7,
-      icon: Flame,
-    },
-    {
-      name: "Focus Master",
-      description: "Keep average focus above 85%",
-      unlocked: stats.averageFocus >= 85 && stats.totalSessions >= 10,
-      icon: Award,
-    },
-    {
-      name: "Marathon",
-      description: "Accumulate 4+ focus hours",
-      unlocked: stats.totalFocusTime >= 240,
-      icon: Clock,
-    },
-    {
-      name: "Consistency Pro",
-      description: "Hit a 14 day best streak",
-      unlocked: stats.bestStreak >= 14,
-      icon: Trophy,
-    },
-    {
-      name: "Daily Habit",
-      description: "Complete at least one session today",
-      unlocked: stats.todaySessions > 0,
-      icon: Calendar,
-    },
-  ];
 
   if (status === "loading" || isLoadingData) {
     return (
@@ -419,7 +447,7 @@ export default function ProfilePage() {
             <Card>
               <CardHeader>
                 <CardTitle>Focus Preferences</CardTitle>
-                <CardDescription>Customize your default focus setup</CardDescription>
+                <CardDescription>Synchronized with the main settings page</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
@@ -446,13 +474,13 @@ export default function ProfilePage() {
                       value={formData.focusGoal}
                       onChange={(e) => onNumberChange("focusGoal", e.target.value)}
                       disabled={!isEditing}
-                      min="1"
-                      max="90"
+                      min="5"
+                      max="120"
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="breakDuration">Break Duration (minutes)</Label>
+                    <Label htmlFor="breakDuration">Short Break Duration (minutes)</Label>
                     <Input
                       id="breakDuration"
                       type="number"
@@ -489,27 +517,62 @@ export default function ProfilePage() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="achievements">
+          <TabsContent value="achievements" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Trophy className="h-5 w-5 text-primary" />
+                  Progress
+                </CardTitle>
+                <CardDescription>
+                  Level {achievementStats.level} • {achievementStats.unlockedCount}/
+                  {achievementStats.totalCount} unlocked
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span>{achievementStats.totalPoints} points</span>
+                  <span>Next: {achievementStats.nextLevelPoints} points</span>
+                </div>
+                <Progress value={achievementStats.progressToNextLevel} />
+              </CardContent>
+            </Card>
+
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {achievements.map((achievement, index) => (
-                <Card key={index} className={achievement.unlocked ? "" : "opacity-50"}>
+              {achievements.map((achievement) => (
+                <Card key={achievement.id} className={achievement.unlocked ? "" : "opacity-60"}>
                   <CardHeader>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-start gap-3">
                       <div
-                        className={`p-2 rounded-lg ${
-                          achievement.unlocked ? "bg-primary/10 text-primary" : "bg-muted"
+                        className={`rounded-lg px-2 py-1 text-lg ${
+                          achievement.unlocked ? "bg-primary/10" : "bg-muted"
                         }`}
                       >
-                        <achievement.icon className="h-5 w-5" />
+                        {achievement.icon || "ACH"}
                       </div>
-                      <div>
+                      <div className="flex-1">
                         <CardTitle className="text-base">{achievement.name}</CardTitle>
-                        <CardDescription className="text-xs">
+                        <CardDescription className="text-xs mt-1">
                           {achievement.description}
                         </CardDescription>
                       </div>
                     </div>
                   </CardHeader>
+                  <CardContent className="space-y-2">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>{achievement.points} pts</span>
+                      <span>{achievement.progress}%</span>
+                    </div>
+                    <Progress value={achievement.progress} />
+                    {achievement.unlocked ? (
+                      <Badge className="gap-1">
+                        <Flame className="h-3 w-3" />
+                        Unlocked
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary">Locked</Badge>
+                    )}
+                  </CardContent>
                 </Card>
               ))}
             </div>

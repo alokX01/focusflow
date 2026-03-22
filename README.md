@@ -43,13 +43,21 @@ A modern focus tracking application that uses computer vision to monitor your at
 
 3. **Set up environment variables**
    ```bash
-   cp env.example .env.local
+   cp .env.example .env.local
    ```
    
-   Edit `.env.local` and add your MongoDB Atlas connection string:
+   Edit `.env.local` and set at least:
    ```env
    MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/focusflow?retryWrites=true&w=majority
+   NEXTAUTH_SECRET=your-long-random-secret
    ```
+
+   Optional variables:
+   - `MONGODB_DB_NAME` (defaults to `focusflow`)
+   - `NEXTAUTH_URL` (required in production; set to your deployed URL)
+   - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (enables Google auth button)
+   - `OPENAI_API_KEY` or `GOOGLE_API_KEY` (AI insight generation; otherwise heuristic fallback is used)
+   - `INIT_API_TOKEN` (protects `/api/init` index setup endpoint)
 
 4. **Set up MongoDB Atlas**
    - Create a new cluster on [MongoDB Atlas](https://www.mongodb.com/atlas)
@@ -196,6 +204,19 @@ A modern focus tracking application that uses computer vision to monitor your at
 npm run build
 npm start
 ```
+
+### Deploying to Vercel
+
+1. Push this repo to GitHub/GitLab/Bitbucket.
+2. Import the project in Vercel.
+3. In Vercel Project Settings -> Environment Variables, add:
+   - `MONGODB_URI`
+   - `NEXTAUTH_SECRET`
+   - `NEXTAUTH_URL` (for example `https://your-app.vercel.app`)
+   - Any optional variables you use (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `INIT_API_TOKEN`).
+4. Deploy. Vercel will run `npm run build` automatically.
+5. (Optional) Create indexes once after deploy:
+   - Send a `POST` request to `/api/init` with header `x-init-token: <INIT_API_TOKEN>`.
 
 ## Troubleshooting
 

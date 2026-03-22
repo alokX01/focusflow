@@ -62,6 +62,10 @@ export async function GET(request: NextRequest) {
 
     const period = searchParams.get("period");
     const archived = searchParams.get("archived");
+    const limitParam = Number(searchParams.get("limit") || 300);
+    const limit = Number.isFinite(limitParam)
+      ? Math.min(Math.max(Math.floor(limitParam), 1), 1000)
+      : 300;
 
     const db = await getDatabase();
 
@@ -79,8 +83,23 @@ export async function GET(request: NextRequest) {
     const sessions = await db
       .collection("sessions")
       .find(query)
+      .project({
+        _id: 1,
+        startTime: 1,
+        endTime: 1,
+        duration: 1,
+        focusPercentage: 1,
+        distractionCount: 1,
+        sessionType: 1,
+        task: 1,
+        isArchived: 1,
+        isCompleted: 1,
+        targetDuration: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      })
       .sort({ startTime: -1 })
-      .limit(500)
+      .limit(limit)
       .toArray();
 
     return NextResponse.json({

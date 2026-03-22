@@ -298,7 +298,8 @@ export function CameraSetup({ onSetupComplete }: CameraSetupProps) {
               <AlertDescription>
                 {step === "permission" && (
                   <>
-                    Click "Enable Camera" to allow camera access for focus
+                    Click &quot;Enable Camera&quot; to allow camera access for
+                    focus
                     tracking.
                   </>
                 )}

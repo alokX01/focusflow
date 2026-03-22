@@ -52,7 +52,7 @@ const DEFAULT_SETTINGS: Settings = {
   autoStartBreaks: false,
   autoStartPomodoros: false,
 
-  cameraEnabled: true,
+  cameraEnabled: false,
   distractionThreshold: 3,
   pauseOnDistraction: true,
 
